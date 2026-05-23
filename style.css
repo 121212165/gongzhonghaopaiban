@@ -340,6 +340,17 @@ body {
     color: #fff;
 }
 
+.toolbar-btn:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+}
+
+.theme-btn:focus-visible,
+.preview-mode-btn:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+}
+
 .toolbar-btn svg {
     width: 16px;
     height: 16px;

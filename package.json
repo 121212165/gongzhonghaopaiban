@@ -1,0 +1,17 @@
+{
+    "name": "gongzhonghaopaiban",
+    "version": "1.0.0",
+    "description": "公众号排版工具 - Markdown编辑器",
+    "scripts": {
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "lint": "npx eslint script.js",
+        "validate:html": "npx html-validate index.html || true"
+    },
+    "devDependencies": {
+        "vitest": "^3.1.1",
+        "jsdom": "^26.1.0",
+        "html-validate": "^8.29.0"
+    },
+    "license": "MIT"
+}
