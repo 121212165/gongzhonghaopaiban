@@ -14,6 +14,53 @@ let undoStack = [];
 let redoStack = [];
 const MAX_UNDO = 50;
 
+function addWechatInlineStyles(html) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(`<div id="wx-root">${html}</div>`, 'text/html');
+    const root = doc.getElementById('wx-root');
+    if (!root) return html;
+
+    function getNodeStyle(tag, node) {
+        const styles = {
+            h1: 'font-size: 24px; font-weight: bold; color: #1a1a1a; margin: 1em 0 0.5em;',
+            h2: 'font-size: 20px; font-weight: bold; color: #1a1a1a; margin: 1em 0 0.5em;',
+            h3: 'font-size: 18px; font-weight: bold; color: #1a1a1a; margin: 1em 0 0.5em;',
+            h4: 'font-size: 16px; font-weight: bold; color: #1a1a1a; margin: 1em 0 0.5em;',
+            h5: 'font-size: 15px; font-weight: bold; color: #1a1a1a; margin: 1em 0 0.5em;',
+            h6: 'font-size: 14px; font-weight: bold; color: #1a1a1a; margin: 1em 0 0.5em;',
+            p: 'font-size: 16px; line-height: 1.8; color: #333; margin-bottom: 1em;',
+            blockquote: 'border-left: 4px solid #007aff; padding: 15px 20px; margin: 20px 0; background: #f8f9fa; color: #666; border-radius: 0 8px 8px 0;',
+            ul: 'padding-left: 2em; margin-bottom: 1em;',
+            ol: 'padding-left: 2em; margin-bottom: 1em;',
+            li: 'margin-bottom: 0.5em; line-height: 1.8;',
+            img: 'max-width: 100%; height: auto; display: block; margin: 20px auto; border-radius: 8px;',
+            a: 'color: #007aff; text-decoration: none;',
+            table: 'width: 100%; border-collapse: collapse; margin: 20px 0;',
+            th: 'border: 1px solid #ddd; padding: 12px; text-align: left; background: #f5f5f5; font-weight: bold;',
+            td: 'border: 1px solid #ddd; padding: 12px; text-align: left;',
+            hr: 'border: none; border-top: 2px solid #e0e0e0; margin: 30px 0;',
+        };
+        if (tag === 'code' && node.parentElement && node.parentElement.tagName !== 'PRE') {
+            return 'background: #f5f5f5; color: #e83e8c; padding: 2px 6px; border-radius: 4px; font-family: Monaco, Menlo, "Ubuntu Mono", Consolas, monospace; font-size: 0.9em;';
+        }
+        return styles[tag] || '';
+    }
+
+    function walk(node) {
+        if (node.nodeType !== 1) return;
+        const tag = node.tagName.toLowerCase();
+        const addedStyle = getNodeStyle(tag, node);
+        if (addedStyle) {
+            const existing = node.getAttribute('style') || '';
+            node.setAttribute('style', addedStyle + existing);
+        }
+        [...node.children].forEach(walk);
+    }
+
+    [...root.children].forEach(walk);
+    return root.innerHTML;
+}
+
 const DB_NAME = 'WeChatEditorDB';
 const DB_VERSION = 1;
 const STORE_NAME = 'images';
@@ -679,8 +726,8 @@ function exportPdf() {
 function exportWechat() {
     const title = articleTitle.value || '未命名文章';
     const content = editor.value;
-    const html = DOMPurify.sanitize(marked.parse(content));
-    
+    const html = addWechatInlineStyles(DOMPurify.sanitize(marked.parse(content)));
+
     const wechatHtml = `
         <section style="max-width: 677px; margin: 0 auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;">
             <h1 style="font-size: 22px; font-weight: bold; color: #1a1a1a; margin-bottom: 20px; text-align: left;">${escapeHtml(title)}</h1>
