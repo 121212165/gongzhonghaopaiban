@@ -8,10 +8,20 @@ let currentPreviewMode = 'desktop';
 let autoSaveTimer = null;
 let currentHash = '';
 let db = null;
+let dbAvailable = true;
+
+let undoStack = [];
+let redoStack = [];
+const MAX_UNDO = 50;
 
 const DB_NAME = 'WeChatEditorDB';
 const DB_VERSION = 1;
 const STORE_NAME = 'images';
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
 
 function initDB() {
     return new Promise((resolve, reject) => {
@@ -34,6 +44,7 @@ function initDB() {
 }
 
 async function saveImageToDB(base64Data) {
+    if (!dbAvailable) throw new Error('IndexedDB unavailable');
     if (!db) await initDB();
     
     return new Promise((resolve, reject) => {
@@ -83,6 +94,10 @@ async function uploadImage(file) {
         reader.onload = async (event) => {
             try {
                 const base64 = event.target.result;
+                if (!dbAvailable) {
+                    resolve({ id: null, data: base64 });
+                    return;
+                }
                 const id = await saveImageToDB(base64);
                 resolve({ id, data: base64 });
             } catch (error) {
@@ -120,26 +135,19 @@ marked.setOptions({
     mangle: false
 });
 
-let isScrolling = false;
-let scrollTimeout = null;
-
+let syncRaf = null;
 function syncScroll(source, target) {
-    if (isScrolling) return;
-    
-    isScrolling = true;
-    
-    const sourceScrollPercentage = source.scrollTop / (source.scrollHeight - source.clientHeight);
-    target.scrollTop = sourceScrollPercentage * (target.scrollHeight - target.clientHeight);
-    
-    clearTimeout(scrollTimeout);
-    scrollTimeout = setTimeout(() => {
-        isScrolling = false;
-    }, 50);
+    if (syncRaf) return;
+    syncRaf = requestAnimationFrame(() => {
+        const percentage = source.scrollTop / (source.scrollHeight - source.clientHeight);
+        target.scrollTop = percentage * (target.scrollHeight - target.clientHeight);
+        syncRaf = null;
+    });
 }
 
 function renderMarkdown() {
     const markdown = editor.value;
-    const html = marked.parse(markdown);
+    const html = DOMPurify.sanitize(marked.parse(markdown));
     preview.innerHTML = html;
     updateStats();
 }
@@ -161,10 +169,21 @@ function updateStats() {
     document.getElementById('readTime').textContent = `${readTime} 分钟`;
 }
 
+function pushUndoState() {
+    undoStack.push({
+        value: editor.value,
+        selectionStart: editor.selectionStart,
+        selectionEnd: editor.selectionEnd
+    });
+    if (undoStack.length > MAX_UNDO) undoStack.shift();
+    redoStack.length = 0;
+}
+
 function wrapSelection(action) {
     const syntax = markdownSyntax[action];
     if (!syntax) return;
-    
+
+    pushUndoState();
     const start = editor.selectionStart;
     const end = editor.selectionEnd;
     const selectedText = editor.value.substring(start, end);
@@ -218,9 +237,31 @@ function handleToolbarClick(e) {
     
     const action = btn.dataset.action;
     if (action === 'undo') {
-        document.execCommand('undo');
+        if (undoStack.length === 0) return;
+        redoStack.push({
+            value: editor.value,
+            selectionStart: editor.selectionStart,
+            selectionEnd: editor.selectionEnd
+        });
+        const state = undoStack.pop();
+        editor.value = state.value;
+        editor.setSelectionRange(state.selectionStart, state.selectionEnd);
+        renderMarkdown();
+        triggerAutoSave();
+        return;
     } else if (action === 'redo') {
-        document.execCommand('redo');
+        if (redoStack.length === 0) return;
+        undoStack.push({
+            value: editor.value,
+            selectionStart: editor.selectionStart,
+            selectionEnd: editor.selectionEnd
+        });
+        const state = redoStack.pop();
+        editor.value = state.value;
+        editor.setSelectionRange(state.selectionStart, state.selectionEnd);
+        renderMarkdown();
+        triggerAutoSave();
+        return;
     } else {
         wrapSelection(action);
     }
@@ -297,52 +338,67 @@ function handleKeyDown(e) {
     
     if (e.key === 'Tab') {
         e.preventDefault();
+        pushUndoState();
         const start = editor.selectionStart;
         const end = editor.selectionEnd;
         const selectedText = editor.value.substring(start, end);
-        
+
         if (e.shiftKey) {
-            editor.value = editor.value.substring(0, start) + selectedText.replace(/^(\s*)/gm, (match, spaces) => spaces.slice(0, -2)) + editor.value.substring(end);
+            const lines = selectedText.split('\n');
+            const firstLineLeading = lines[0].length - lines[0].trimStart().length;
+            const removedFromFirst = Math.min(2, firstLineLeading);
+            let totalLengthChange = 0;
+            const adjustedLines = lines.map(line => {
+                const leading = line.length - line.trimStart().length;
+                const toRemove = Math.min(2, leading);
+                totalLengthChange -= toRemove;
+                return line.substring(toRemove);
+            });
+            editor.value = editor.value.substring(0, start) + adjustedLines.join('\n') + editor.value.substring(end);
+            const newStart = Math.max(start - removedFromFirst, 0);
+            const newEnd = Math.max(end + totalLengthChange, newStart);
+            editor.setSelectionRange(newStart, newEnd);
         } else {
+            const lineCount = selectedText.split('\n').length;
             editor.value = editor.value.substring(0, start) + selectedText.replace(/^/gm, '  ') + editor.value.substring(end);
+            editor.setSelectionRange(start + 2, end + 2 * lineCount);
         }
-        
+
         renderMarkdown();
     }
 }
 
 function handlePaste(e) {
-    e.preventDefault();
-    
-    const items = (e.clipboardData || e.originalEvent.clipboardData).items;
-    let hasImage = false;
-    
+    const clipboardData = e.clipboardData;
+    if (!clipboardData) return;
+
+    const items = clipboardData.items;
+
     for (let i = 0; i < items.length; i++) {
         if (items[i].type.indexOf('image') !== -1) {
-            hasImage = true;
+            e.preventDefault();
             const blob = items[i].getAsFile();
             const reader = new FileReader();
-            
+
             reader.onload = async function(event) {
                 try {
                     const base64 = event.target.result;
-                    await saveImageToDB(base64);
+                    if (dbAvailable) {
+                        await saveImageToDB(base64);
+                    }
                     insertImage(base64);
                 } catch (error) {
                     console.error('Failed to save image:', error);
                     insertImage(event.target.result);
                 }
             };
-            
+
             reader.readAsDataURL(blob);
-            break;
+            return;
         }
     }
-    
-    if (!hasImage) {
-        const text = (e.clipboardData || e.originalEvent.clipboardData).getData('text/plain');
-        document.execCommand('insertText', false, text);
-    }
+
+    // No image found — let native paste handle text
 }
 
 function insertImage(src) {
@@ -372,11 +428,17 @@ function saveContent() {
     const hash = simpleHash(content + title + author);
     
     if (hash !== currentHash) {
-        localStorage.setItem('markdownContent', content);
-        localStorage.setItem('articleTitle', title);
-        localStorage.setItem('articleAuthor', author);
-        localStorage.setItem('contentHash', hash);
-        
+        try {
+            localStorage.setItem('markdownContent', content);
+            localStorage.setItem('articleTitle', title);
+            localStorage.setItem('articleAuthor', author);
+            localStorage.setItem('contentHash', hash);
+        } catch (e) {
+            if (e.name === 'QuotaExceededError') {
+                alert('存储空间已满，请删除旧版本或减少文章中的图片');
+            }
+        }
+
         currentHash = hash;
         document.getElementById('saveStatus').textContent = '已自动保存';
     } else {
@@ -430,9 +492,15 @@ function saveVersion() {
     
     versions.unshift(version);
     if (versions.length > 10) versions.pop();
-    
-    localStorage.setItem('versions', JSON.stringify(versions));
-    alert('版本已保存');
+
+    try {
+        localStorage.setItem('versions', JSON.stringify(versions));
+        alert('版本已保存');
+    } catch (e) {
+        if (e.name === 'QuotaExceededError') {
+            alert('存储空间已满，请删除旧版本或减少文章中的图片');
+        }
+    }
 }
 
 function showVersions() {
@@ -442,16 +510,19 @@ function showVersions() {
     if (versions.length === 0) {
         versionList.innerHTML = '<p>暂无历史版本</p>';
     } else {
-        versionList.innerHTML = versions.map(v => `
+        versionList.innerHTML = versions.map(v => {
+            const safeTitle = v.title.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c]));
+            return `
             <div class="version-item">
-                <div class="version-title">${v.title}</div>
+                <div class="version-title">${safeTitle}</div>
                 <div class="version-time">${v.timestamp}</div>
                 <div class="version-actions">
                     <button class="version-restore" data-id="${v.id}">恢复</button>
                     <button class="version-delete" data-id="${v.id}">删除</button>
                 </div>
             </div>
-        `).join('');
+        `;
+        }).join('');
     }
     
     document.getElementById('versionModal').classList.add('show');
@@ -488,7 +559,7 @@ function exportMarkdown() {
     
     const markdown = `# ${title}\n\n${articleAuthor.value ? `作者：${articleAuthor.value}\n\n` : ''}${content}`;
     
-    const blob = new Blob([markdown], { type: 'text/markdown' });
+    const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -502,15 +573,19 @@ function exportMarkdown() {
 function exportPdf() {
     const title = articleTitle.value || '未命名文章';
     const content = editor.value;
-    const html = marked.parse(content);
+    const html = DOMPurify.sanitize(marked.parse(content));
     
     const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+        alert('弹窗被浏览器拦截，请允许弹窗后重试');
+        return;
+    }
     printWindow.document.write(`
         <!DOCTYPE html>
         <html lang="zh-CN">
         <head>
             <meta charset="UTF-8">
-            <title>${title}</title>
+            <title>${escapeHtml(title)}</title>
             <style>
                 body {
                     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
@@ -591,8 +666,8 @@ function exportPdf() {
             </style>
         </head>
         <body>
-            <h1>${title}</h1>
-            ${articleAuthor.value ? `<p style="color: #666; margin-bottom: 30px;">作者：${articleAuthor.value}</p>` : ''}
+            <h1>${escapeHtml(title)}</h1>
+            ${articleAuthor.value ? `<p style="color: #666; margin-bottom: 30px;">作者：${escapeHtml(articleAuthor.value)}</p>` : ''}
             ${html}
         </body>
         </html>
@@ -604,12 +679,12 @@ function exportPdf() {
 function exportWechat() {
     const title = articleTitle.value || '未命名文章';
     const content = editor.value;
-    const html = marked.parse(content);
+    const html = DOMPurify.sanitize(marked.parse(content));
     
     const wechatHtml = `
         <section style="max-width: 677px; margin: 0 auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;">
-            <h1 style="font-size: 22px; font-weight: bold; color: #1a1a1a; margin-bottom: 20px; text-align: left;">${title}</h1>
-            ${articleAuthor.value ? `<p style="color: #888; font-size: 14px; margin-bottom: 30px;">作者：${articleAuthor.value}</p>` : ''}
+            <h1 style="font-size: 22px; font-weight: bold; color: #1a1a1a; margin-bottom: 20px; text-align: left;">${escapeHtml(title)}</h1>
+            ${articleAuthor.value ? `<p style="color: #888; font-size: 14px; margin-bottom: 30px;">作者：${escapeHtml(articleAuthor.value)}</p>` : ''}
             <section style="font-size: 16px; line-height: 1.8; color: #333;">
                 ${html}
             </section>
@@ -675,6 +750,11 @@ document.getElementById('versionModal').addEventListener('click', (e) => {
         document.getElementById('versionModal').classList.remove('show');
     }
 });
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        document.getElementById('versionModal').classList.remove('show');
+    }
+});
 document.getElementById('versionList').addEventListener('click', (e) => {
     if (e.target.classList.contains('version-restore')) {
         restoreVersion(parseInt(e.target.dataset.id));
@@ -684,8 +764,10 @@ document.getElementById('versionList').addEventListener('click', (e) => {
     }
 });
 
+let renderTimeout;
 editor.addEventListener('input', () => {
-    renderMarkdown();
+    clearTimeout(renderTimeout);
+    renderTimeout = setTimeout(renderMarkdown, 150);
     triggerAutoSave();
 });
 editor.addEventListener('keydown', handleKeyDown);
@@ -699,5 +781,6 @@ initDB().then(() => {
     loadContent();
 }).catch(error => {
     console.error('Failed to initialize database:', error);
+    dbAvailable = false;
     loadContent();
 });
