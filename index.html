@@ -1696,7 +1696,60 @@ function deleteVersion(id) {
 }
 
 // ============================================================
-// InlineStyleEngine - WeChat Compatible HTML
+// inlineComputedStyles - Get actual rendered styles from iframe
+// ============================================================
+
+const STYLE_PROPS = [
+    'color', 'background-color', 'background', 'font-family', 'font-size',
+    'font-weight', 'font-style', 'line-height', 'letter-spacing',
+    'text-align', 'text-decoration', 'text-transform', 'text-indent',
+    'vertical-align', 'white-space', 'word-break', 'word-spacing',
+    'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
+    'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+    'border-top', 'border-right', 'border-bottom', 'border-left',
+    'border-radius', 'border-collapse', 'border-spacing',
+    'display', 'flex-direction', 'flex-wrap', 'justify-content',
+    'align-items', 'align-self', 'gap', 'flex',
+    'width', 'max-width', 'min-width', 'height',
+    'overflow', 'overflow-x', 'overflow-y',
+    'position', 'top', 'right', 'bottom', 'left', 'z-index',
+    'opacity', 'box-shadow', 'transform',
+    'list-style-type', 'list-style-position',
+    'table-layout', 'caption-side',
+    'box-sizing'
+];
+
+function inlineComputedStyles(root) {
+    const elements = root.querySelectorAll('*');
+    for (const el of elements) {
+        // Skip SVG internals, script, style
+        const tag = el.tagName.toLowerCase();
+        if (tag === 'script' || tag === 'style' || tag === 'link' || tag === 'meta') {
+            continue;
+        }
+
+        const computed = window.getComputedStyle(el);
+        let styles = '';
+
+        for (const prop of STYLE_PROPS) {
+            const val = computed.getPropertyValue(prop);
+            // Skip default/inherit values and zero margins/padding that add noise
+            if (val && val !== 'initial' && val !== 'inherit' && val !== 'normal' && val !== 'none'
+                && val !== 'auto' && val !== '0px' && val !== '0s' && val !== '0ms'
+                && val !== 'visible' && val !== 'static' && val !== 'start'
+                && val !== 'medium' && val !== 'baseline') {
+                styles += `${prop}:${val};`;
+            }
+        }
+
+        if (styles) {
+            el.setAttribute('style', styles);
+        }
+    }
+}
+
+// ============================================================
+// InlineStyleEngine - WeChat Compatible HTML (Markdown mode)
 // ============================================================
 
 const InlineStyleEngine = {
@@ -1937,16 +1990,20 @@ function exportPdf() {
  * inline styles, so the formatting is preserved when pasting.
  */
 async function exportWechat() {
-    // Get rendered HTML — from iframe in HTML mode, from div in Markdown mode
     let previewHtml = '';
     let previewText = '';
 
     if (currentInputMode === 'html' && previewIframe) {
+        // HTML mode: compute actual rendered styles from iframe and inline them
         const doc = previewIframe.contentDocument || previewIframe.contentWindow.document;
-        // Get the body content (or the full document if no body)
         const body = doc.body;
-        previewHtml = body ? body.innerHTML : doc.documentElement.innerHTML;
-        previewText = body ? body.textContent : '';
+        if (!body || !body.innerHTML.trim()) {
+            showToast('请先输入内容', 'error');
+            return;
+        }
+        inlineComputedStyles(body);
+        previewHtml = body.innerHTML;
+        previewText = body.textContent;
     } else {
         previewHtml = preview.innerHTML;
         previewText = preview.textContent;
@@ -1957,8 +2014,14 @@ async function exportWechat() {
         return;
     }
 
-    // Build WeChat-compatible HTML with all styles inlined
-    const wechatHtml = InlineStyleEngine.buildWechatHTML(previewHtml);
+    let wechatHtml;
+    if (currentInputMode === 'html' && previewIframe) {
+        // HTML mode: styles already inlined via getComputedStyle, use as-is
+        wechatHtml = previewHtml;
+    } else {
+        // Markdown mode: apply theme-based inline styles
+        wechatHtml = InlineStyleEngine.buildWechatHTML(previewHtml);
+    }
 
     // Wrap in a section with max-width for WeChat reading experience
     const wrappedHtml = `<section style="max-width: 578px; margin: 0 auto; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;">${wechatHtml}</section>`;
