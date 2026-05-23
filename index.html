@@ -1720,11 +1720,22 @@ const STYLE_PROPS = [
 ];
 
 function inlineComputedStyles(root) {
-    const elements = root.querySelectorAll('*');
-    for (const el of elements) {
-        // Skip SVG internals, script, style
+    // First, force all animations to their final state
+    const doc = root.ownerDocument || root;
+    let styleOverride = doc.getElementById('inline-export-overrides');
+    if (!styleOverride) {
+        styleOverride = doc.createElement('style');
+        styleOverride.id = 'inline-export-overrides';
+        styleOverride.textContent = '*, *::before, *::after { animation: none !important; animation-delay: 0s !important; transition: none !important; opacity: 1 !important; transform: none !important; }';
+        doc.head.appendChild(styleOverride);
+    }
+
+    // Include the root element itself (body)
+    const allElements = [root, ...root.querySelectorAll('*')];
+
+    for (const el of allElements) {
         const tag = el.tagName.toLowerCase();
-        if (tag === 'script' || tag === 'style' || tag === 'link' || tag === 'meta') {
+        if (tag === 'script' || tag === 'style' || tag === 'link' || tag === 'meta' || tag === 'title' || tag === 'head') {
             continue;
         }
 
@@ -1733,7 +1744,6 @@ function inlineComputedStyles(root) {
 
         for (const prop of STYLE_PROPS) {
             const val = computed.getPropertyValue(prop);
-            // Skip default/inherit values and zero margins/padding that add noise
             if (val && val !== 'initial' && val !== 'inherit' && val !== 'normal' && val !== 'none'
                 && val !== 'auto' && val !== '0px' && val !== '0s' && val !== '0ms'
                 && val !== 'visible' && val !== 'static' && val !== 'start'
@@ -1746,6 +1756,9 @@ function inlineComputedStyles(root) {
             el.setAttribute('style', styles);
         }
     }
+
+    // Remove the override style
+    if (styleOverride) styleOverride.remove();
 }
 
 // ============================================================
