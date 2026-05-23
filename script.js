@@ -128,12 +128,55 @@ marked.setOptions({
 
 function renderPreview() {
     if (currentInputMode === 'markdown') {
-        const markdown = editor.value;
-        preview.innerHTML = sanitizeHtml(marked.parse(markdown));
+        // Markdown mode: render into the div as before
+        if (!previewIframe) {
+            preview.innerHTML = sanitizeHtml(marked.parse(editor.value));
+        }
     } else {
-        preview.innerHTML = sanitizeHtml(htmlEditor.value);
+        // HTML mode: render into iframe for full document support
+        renderHtmlInIframe(htmlEditor.value);
     }
     updateStats();
+}
+
+let previewIframe = null;
+let injectedStyleIds = [];
+
+function renderHtmlInIframe(html) {
+    const previewWrapper = document.querySelector('.preview-wrapper');
+    const previewLabel = previewWrapper.querySelector('.preview-label');
+
+    // Create iframe on first use
+    if (!previewIframe) {
+        // Hide the div preview
+        preview.style.display = 'none';
+
+        // Create iframe
+        previewIframe = document.createElement('iframe');
+        previewIframe.id = 'previewFrame';
+        previewIframe.style.cssText = 'flex:1; width:100%; border:none; background:#fff;';
+        previewWrapper.insertBefore(previewIframe, previewLabel.nextSibling);
+    }
+
+    // Write full HTML into iframe (supports complete documents with <style>, <link>, etc.)
+    const doc = previewIframe.contentDocument || previewIframe.contentWindow.document;
+    doc.open();
+    doc.write(html || '<html><body></body></html>');
+    doc.close();
+}
+
+function destroyHtmlIframe() {
+    if (previewIframe) {
+        previewIframe.remove();
+        previewIframe = null;
+    }
+    // Clean up injected styles
+    injectedStyleIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.remove();
+    });
+    injectedStyleIds = [];
+    preview.style.display = '';
 }
 
 function updateStats() {
@@ -171,16 +214,21 @@ function switchInputMode(mode) {
     const mdWrapper = document.getElementById('markdownEditorWrapper');
     const htmlWrapper = document.getElementById('htmlEditorWrapper');
     const mdToolbar = document.getElementById('markdownToolbar');
+    const themeSection = document.querySelector('.section:has(.theme-buttons)');
 
     if (mode === 'markdown') {
         mdWrapper.classList.remove('hidden');
         htmlWrapper.classList.add('hidden');
         mdToolbar.style.display = 'flex';
+        destroyHtmlIframe();
+        if (themeSection) themeSection.style.display = '';
         renderPreview();
     } else {
         mdWrapper.classList.add('hidden');
         htmlWrapper.classList.remove('hidden');
         mdToolbar.style.display = 'none';
+        // Hide theme section in HTML mode — HTML has its own styles
+        if (themeSection) themeSection.style.display = 'none';
         renderPreview();
     }
 
@@ -808,8 +856,20 @@ function exportPdf() {
  * inline styles, so the formatting is preserved when pasting.
  */
 async function exportWechat() {
-    // Get the rendered HTML from preview
-    const previewHtml = preview.innerHTML;
+    // Get rendered HTML — from iframe in HTML mode, from div in Markdown mode
+    let previewHtml = '';
+    let previewText = '';
+
+    if (currentInputMode === 'html' && previewIframe) {
+        const doc = previewIframe.contentDocument || previewIframe.contentWindow.document;
+        // Get the body content (or the full document if no body)
+        const body = doc.body;
+        previewHtml = body ? body.innerHTML : doc.documentElement.innerHTML;
+        previewText = body ? body.textContent : '';
+    } else {
+        previewHtml = preview.innerHTML;
+        previewText = preview.textContent;
+    }
 
     if (!previewHtml.trim()) {
         showToast('请先输入内容', 'error');
@@ -825,7 +885,7 @@ async function exportWechat() {
     try {
         // Use Clipboard API to write HTML + plain text
         const htmlBlob = new Blob([wrappedHtml], { type: 'text/html' });
-        const textBlob = new Blob([preview.textContent], { type: 'text/plain' });
+        const textBlob = new Blob([previewText], { type: 'text/plain' });
 
         await navigator.clipboard.write([
             new ClipboardItem({
@@ -896,6 +956,7 @@ function clearContent() {
         htmlEditor.value = '';
         articleTitle.value = '';
         articleAuthor.value = '';
+        destroyHtmlIframe();
         renderPreview();
         triggerAutoSave();
     }
