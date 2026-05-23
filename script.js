@@ -633,7 +633,7 @@ const WECHAT_UNSUPPORTED = new Set([
 ]);
 
 const WECHAT_INLINE_PROPS = [
-    'color', 'background-color', 'background', 'background-image',
+    'color', 'background-color', 'background-image',
     'background-size', 'background-position', 'background-repeat',
     'font-family', 'font-size', 'font-weight', 'font-style',
     'line-height', 'letter-spacing', 'word-spacing',
@@ -680,23 +680,14 @@ function parseDeclarations(str) {
     return map;
 }
 
-function mergeStyleStrings(existing, incoming) {
-    const merged = parseDeclarations(existing);
-    const incomingMap = parseDeclarations(incoming);
-    for (const [k, v] of incomingMap) {
-        merged.set(k, v);
-    }
-    return Array.from(merged.entries()).map(([k, v]) => `${k}:${v}`).join(';');
-}
-
 function inlineStylesForWechat(iframeDoc) {
     const body = iframeDoc.body;
-    if (!body) return '';
+    if (!body) return { html: '', bodyStyles: '' };
 
     // Step 1: Force animations to final state
     const override = iframeDoc.createElement('style');
     override.textContent = '*,*::before,*::after{animation:none!important;transition:none!important;opacity:1!important;transform:none!important;}';
-    iframeDoc.head.appendChild(override);
+    (iframeDoc.head || iframeDoc.documentElement).appendChild(override);
 
     // Step 2: Extract CSS rules from <style> tags
     let allRules = [];
@@ -705,22 +696,24 @@ function inlineStylesForWechat(iframeDoc) {
         allRules = allRules.concat(parseCSSRules(styleEl.textContent || ''));
     }
 
-    // Step 3: Walk all elements, merge parsed rules + computed styles
-    const allElements = [body, ...body.querySelectorAll('*')];
+    // Step 3: Walk ALL elements including <html> and <body>
+    const htmlEl = iframeDoc.documentElement;
+    const allElements = [htmlEl, body, ...body.querySelectorAll('*')];
+    let bodyStyles = '';
 
     for (const el of allElements) {
         const tag = el.tagName.toLowerCase();
         if (['script', 'style', 'link', 'meta', 'title', 'head'].includes(tag)) continue;
 
-        // Collect parsed CSS declarations that match this element
         let mergedDecl = new Map();
 
+        // Parse CSS rules that match this element
         for (const rule of allRules) {
             try {
                 if (el.matches(rule.selector)) {
                     const decls = parseDeclarations(rule.declarations);
                     for (const [prop, val] of decls) {
-                        mergedDecl.set(prop, val);  // later rules override
+                        mergedDecl.set(prop, val);
                     }
                 }
             } catch (e) {
@@ -728,20 +721,25 @@ function inlineStylesForWechat(iframeDoc) {
             }
         }
 
-        // Step 4: Resolve CSS variables via getComputedStyle
-        const computed = iframeDoc.defaultView.getComputedStyle(el);
-        for (const prop of WECHAT_INLINE_PROPS) {
-            if (WECHAT_UNSUPPORTED.has(prop)) continue;
-            const val = computed.getPropertyValue(prop);
-            if (val && val !== 'initial' && val !== 'inherit' && val !== 'normal'
-                && val !== 'none' && val !== 'auto' && val !== '0px'
-                && val !== 'medium' && val !== 'baseline') {
-                // computed resolves var() references
-                mergedDecl.set(prop, val);
+        // Resolve CSS variables via getComputedStyle
+        try {
+            const win = iframeDoc.defaultView;
+            if (!win) continue;
+            const computed = win.getComputedStyle(el);
+            for (const prop of WECHAT_INLINE_PROPS) {
+                if (WECHAT_UNSUPPORTED.has(prop)) continue;
+                const val = computed.getPropertyValue(prop);
+                if (val && val !== 'initial' && val !== 'inherit' && val !== 'normal'
+                    && val !== 'none' && val !== 'auto' && val !== '0px'
+                    && val !== 'medium' && val !== 'baseline') {
+                    mergedDecl.set(prop, val);
+                }
             }
+        } catch (e) {
+            // getComputedStyle failed, skip computed styles for this element
         }
 
-        // Step 5: Existing inline styles win
+        // Existing inline styles win
         const existingStyle = el.getAttribute('style') || '';
         if (existingStyle) {
             const existing = parseDeclarations(existingStyle);
@@ -750,7 +748,7 @@ function inlineStylesForWechat(iframeDoc) {
             }
         }
 
-        // Step 6: Filter unsupported properties
+        // Filter unsupported properties
         const filtered = new Map();
         for (const [prop, val] of mergedDecl) {
             if (!WECHAT_UNSUPPORTED.has(prop)) {
@@ -758,23 +756,28 @@ function inlineStylesForWechat(iframeDoc) {
             }
         }
 
-        // Step 7: Set inline style
+        // Set inline style
         const styleStr = Array.from(filtered.entries()).map(([k, v]) => `${k}:${v}`).join(';');
         if (styleStr) {
             el.setAttribute('style', styleStr);
         }
 
-        // Step 8: Strip class and id (WeChat ignores them)
+        // Capture body styles before stripping
+        if (el === body) {
+            bodyStyles = styleStr;
+        }
+
+        // Strip class and id
         el.removeAttribute('class');
         el.removeAttribute('id');
     }
 
-    // Step 9: Remove <style> tags
+    // Remove <style> tags
     for (const styleEl of iframeDoc.querySelectorAll('style')) {
         styleEl.remove();
     }
 
-    return body.innerHTML;
+    return { html: body.innerHTML, bodyStyles };
 }
 
 // ============================================================
@@ -1021,6 +1024,7 @@ function exportPdf() {
 async function exportWechat() {
     let previewHtml = '';
     let previewText = '';
+    let wechatHtml = '';
 
     if (currentInputMode === 'html' && previewIframe) {
         const doc = previewIframe.contentDocument || previewIframe.contentWindow.document;
@@ -1029,12 +1033,16 @@ async function exportWechat() {
             showToast('请先输入内容', 'error');
             return;
         }
-        // Use the reference approach: parse CSS + resolve variables + filter unsupported
-        previewHtml = inlineStylesForWechat(doc);
+        const result = inlineStylesForWechat(doc);
+        previewHtml = result.html;
         previewText = body.textContent;
+
+        // Wrap body content with body's own styles (background, color, font)
+        wechatHtml = `<div style="${result.bodyStyles}">${previewHtml}</div>`;
     } else {
         previewHtml = preview.innerHTML;
         previewText = preview.textContent;
+        wechatHtml = InlineStyleEngine.buildWechatHTML(previewHtml);
     }
 
     if (!previewHtml.trim()) {
@@ -1042,23 +1050,8 @@ async function exportWechat() {
         return;
     }
 
-    let wechatHtml;
-    if (currentInputMode === 'html' && previewIframe) {
-        // HTML mode: styles already inlined via getComputedStyle, use as-is
-        wechatHtml = previewHtml;
-    } else {
-        // Markdown mode: apply theme-based inline styles
-        wechatHtml = InlineStyleEngine.buildWechatHTML(previewHtml);
-    }
-
     // Wrap in a section with max-width for WeChat reading experience
-    let wrappedHtml;
-    if (currentInputMode === 'html' && previewIframe) {
-        // HTML mode: styles already inlined, just wrap with max-width
-        wrappedHtml = `<section style="max-width: 578px; margin: 0 auto; padding: 0;">${wechatHtml}</section>`;
-    } else {
-        wrappedHtml = `<section style="max-width: 578px; margin: 0 auto; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;">${wechatHtml}</section>`;
-    }
+    const wrappedHtml = `<section style="max-width: 578px; margin: 0 auto; padding: 0;">${wechatHtml}</section>`;
 
     try {
         // Use Clipboard API to write HTML + plain text
