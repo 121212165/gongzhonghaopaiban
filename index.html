@@ -3,14 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>公众号排版器 - Markdown 编辑器</title>
+    <title>公众号排版器</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="app-container">
         <div class="sidebar">
             <h2>排版工具</h2>
-            
+
+            <div class="section">
+                <h3>输入模式</h3>
+                <div class="input-mode-buttons">
+                    <button class="input-mode-btn active" data-mode="markdown">Markdown</button>
+                    <button class="input-mode-btn" data-mode="html">HTML</button>
+                </div>
+            </div>
+
             <div class="section">
                 <h3>主题选择</h3>
                 <div class="theme-buttons">
@@ -77,7 +85,7 @@
                 <div class="export-buttons">
                     <button id="exportMd">导出 Markdown</button>
                     <button id="exportPdf">导出 PDF</button>
-                    <button id="exportWechat">复制公众号格式</button>
+                    <button id="exportWechat" class="export-wechat-btn">复制公众号格式</button>
                 </div>
             </div>
 
@@ -97,7 +105,7 @@
         </div>
 
         <div class="main-content">
-            <div class="toolbar">
+            <div class="toolbar" id="markdownToolbar">
                 <div class="toolbar-group">
                     <button class="toolbar-btn" data-action="bold" title="加粗 (Ctrl+B)">
                         <strong>B</strong>
@@ -213,9 +221,16 @@
             </div>
 
             <div class="editor-container">
-                <div class="editor-wrapper">
+                <!-- Markdown 编辑器 -->
+                <div class="editor-wrapper" id="markdownEditorWrapper">
                     <div class="editor-label">Markdown 编辑</div>
                     <textarea id="editor" placeholder="开始输入 Markdown 内容...&#10;&#10;# 标题&#10;&#10;## 二级标题&#10;&#10;这是一段普通文本，**加粗**、*斜体*、~~删除线~~&#10;&#10;- 无序列表项&#10;- 另一项&#10;&#10;1. 有序列表项&#10;2. 另一项&#10;&#10;> 引用内容&#10;&#10;```javascript&#10;console.log('Hello World');&#10;```"></textarea>
+                </div>
+
+                <!-- HTML 编辑器（初始隐藏） -->
+                <div class="editor-wrapper hidden" id="htmlEditorWrapper">
+                    <div class="editor-label">HTML 编辑 <span class="editor-hint">粘贴或输入 HTML，右侧实时渲染</span></div>
+                    <textarea id="htmlEditor" placeholder="粘贴你的 HTML 代码到这里...&#10;&#10;<h1>标题</h1>&#10;<p>这是一段<strong>加粗</strong>的文字。</p>&#10;<blockquote>引用内容</blockquote>&#10;<ul>&#10;  <li>列表项 1</li>&#10;  <li>列表项 2</li>&#10;</ul>"></textarea>
                 </div>
 
                 <div class="preview-wrapper">
@@ -238,7 +253,11 @@
         </div>
     </div>
 
+    <!-- 复制成功提示 -->
+    <div class="toast" id="toast"></div>
+
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
     <script src="script.js"></script>
 </body>
 </html>
