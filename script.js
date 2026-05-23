@@ -615,69 +615,166 @@ function deleteVersion(id) {
 }
 
 // ============================================================
-// inlineComputedStyles - Get actual rendered styles from iframe
+// WeChat inline-style converter (based on reference implementation)
 // ============================================================
 
-const STYLE_PROPS = [
-    'color', 'background-color', 'background', 'font-family', 'font-size',
-    'font-weight', 'font-style', 'line-height', 'letter-spacing',
+// WeChat unsupported CSS properties - stripped during export
+const WECHAT_UNSUPPORTED = new Set([
+    'position', 'float', 'clear', 'z-index', 'overflow',
+    'display', 'flex', 'flex-direction', 'flex-wrap',
+    'justify-content', 'align-items', 'align-self', 'gap',
+    'grid', 'grid-template', 'grid-template-columns', 'grid-template-rows',
+    'animation', 'animation-name', 'animation-duration', 'animation-delay',
+    'animation-fill-mode', 'animation-timing-function', 'animation-iteration-count',
+    'transition', 'transform', 'transform-origin',
+    'pointer-events', 'user-select', 'cursor',
+    'visibility', 'opacity', 'filter', 'backdrop-filter',
+    'box-shadow', 'text-shadow',
+]);
+
+const WECHAT_INLINE_PROPS = [
+    'color', 'background-color', 'background', 'background-image',
+    'background-size', 'background-position', 'background-repeat',
+    'font-family', 'font-size', 'font-weight', 'font-style',
+    'line-height', 'letter-spacing', 'word-spacing',
     'text-align', 'text-decoration', 'text-transform', 'text-indent',
-    'vertical-align', 'white-space', 'word-break', 'word-spacing',
+    'vertical-align', 'white-space',
     'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
     'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
-    'border-top', 'border-right', 'border-bottom', 'border-left',
+    'border', 'border-top', 'border-right', 'border-bottom', 'border-left',
+    'border-color', 'border-style', 'border-width',
+    'border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color',
     'border-radius', 'border-collapse', 'border-spacing',
-    'display', 'flex-direction', 'flex-wrap', 'justify-content',
-    'align-items', 'align-self', 'gap', 'flex',
     'width', 'max-width', 'min-width', 'height',
-    'overflow', 'overflow-x', 'overflow-y',
-    'position', 'top', 'right', 'bottom', 'left', 'z-index',
-    'opacity', 'box-shadow', 'transform',
     'list-style-type', 'list-style-position',
-    'table-layout', 'caption-side',
-    'box-sizing'
+    'table-layout', 'caption-side', 'box-sizing',
 ];
 
-function inlineComputedStyles(root) {
-    // First, force all animations to their final state
-    const doc = root.ownerDocument || root;
-    let styleOverride = doc.getElementById('inline-export-overrides');
-    if (!styleOverride) {
-        styleOverride = doc.createElement('style');
-        styleOverride.id = 'inline-export-overrides';
-        styleOverride.textContent = '*, *::before, *::after { animation: none !important; animation-delay: 0s !important; transition: none !important; opacity: 1 !important; transform: none !important; }';
-        doc.head.appendChild(styleOverride);
+function parseCSSRules(cssText) {
+    const rules = [];
+    const cleaned = cssText.replace(/\/\*[\s\S]*?\*\//g, '');
+    const regex = /([^{]+)\{([^}]+)\}/g;
+    let m;
+    while ((m = regex.exec(cleaned)) !== null) {
+        const selectors = m[1].trim().split(',');
+        const decl = m[2].trim();
+        for (const sel of selectors) {
+            const s = sel.trim();
+            if (s && !s.startsWith('@') && !s.startsWith('/*')) {
+                rules.push({ selector: s, declarations: decl });
+            }
+        }
+    }
+    return rules;
+}
+
+function parseDeclarations(str) {
+    const map = new Map();
+    for (const part of str.split(';')) {
+        const i = part.indexOf(':');
+        if (i === -1) continue;
+        const prop = part.substring(0, i).trim().toLowerCase();
+        const val = part.substring(i + 1).trim();
+        if (prop && val) map.set(prop, val);
+    }
+    return map;
+}
+
+function mergeStyleStrings(existing, incoming) {
+    const merged = parseDeclarations(existing);
+    const incomingMap = parseDeclarations(incoming);
+    for (const [k, v] of incomingMap) {
+        merged.set(k, v);
+    }
+    return Array.from(merged.entries()).map(([k, v]) => `${k}:${v}`).join(';');
+}
+
+function inlineStylesForWechat(iframeDoc) {
+    const body = iframeDoc.body;
+    if (!body) return '';
+
+    // Step 1: Force animations to final state
+    const override = iframeDoc.createElement('style');
+    override.textContent = '*,*::before,*::after{animation:none!important;transition:none!important;opacity:1!important;transform:none!important;}';
+    iframeDoc.head.appendChild(override);
+
+    // Step 2: Extract CSS rules from <style> tags
+    let allRules = [];
+    for (const styleEl of iframeDoc.querySelectorAll('style')) {
+        if (styleEl === override) continue;
+        allRules = allRules.concat(parseCSSRules(styleEl.textContent || ''));
     }
 
-    // Include the root element itself (body)
-    const allElements = [root, ...root.querySelectorAll('*')];
+    // Step 3: Walk all elements, merge parsed rules + computed styles
+    const allElements = [body, ...body.querySelectorAll('*')];
 
     for (const el of allElements) {
         const tag = el.tagName.toLowerCase();
-        if (tag === 'script' || tag === 'style' || tag === 'link' || tag === 'meta' || tag === 'title' || tag === 'head') {
-            continue;
-        }
+        if (['script', 'style', 'link', 'meta', 'title', 'head'].includes(tag)) continue;
 
-        const computed = window.getComputedStyle(el);
-        let styles = '';
+        // Collect parsed CSS declarations that match this element
+        let mergedDecl = new Map();
 
-        for (const prop of STYLE_PROPS) {
-            const val = computed.getPropertyValue(prop);
-            if (val && val !== 'initial' && val !== 'inherit' && val !== 'normal' && val !== 'none'
-                && val !== 'auto' && val !== '0px' && val !== '0s' && val !== '0ms'
-                && val !== 'visible' && val !== 'static' && val !== 'start'
-                && val !== 'medium' && val !== 'baseline') {
-                styles += `${prop}:${val};`;
+        for (const rule of allRules) {
+            try {
+                if (el.matches(rule.selector)) {
+                    const decls = parseDeclarations(rule.declarations);
+                    for (const [prop, val] of decls) {
+                        mergedDecl.set(prop, val);  // later rules override
+                    }
+                }
+            } catch (e) {
+                // skip invalid selectors (pseudo-elements, etc.)
             }
         }
 
-        if (styles) {
-            el.setAttribute('style', styles);
+        // Step 4: Resolve CSS variables via getComputedStyle
+        const computed = iframeDoc.defaultView.getComputedStyle(el);
+        for (const prop of WECHAT_INLINE_PROPS) {
+            if (WECHAT_UNSUPPORTED.has(prop)) continue;
+            const val = computed.getPropertyValue(prop);
+            if (val && val !== 'initial' && val !== 'inherit' && val !== 'normal'
+                && val !== 'none' && val !== 'auto' && val !== '0px'
+                && val !== 'medium' && val !== 'baseline') {
+                // computed resolves var() references
+                mergedDecl.set(prop, val);
+            }
         }
+
+        // Step 5: Existing inline styles win
+        const existingStyle = el.getAttribute('style') || '';
+        if (existingStyle) {
+            const existing = parseDeclarations(existingStyle);
+            for (const [prop, val] of existing) {
+                mergedDecl.set(prop, val);
+            }
+        }
+
+        // Step 6: Filter unsupported properties
+        const filtered = new Map();
+        for (const [prop, val] of mergedDecl) {
+            if (!WECHAT_UNSUPPORTED.has(prop)) {
+                filtered.set(prop, val);
+            }
+        }
+
+        // Step 7: Set inline style
+        const styleStr = Array.from(filtered.entries()).map(([k, v]) => `${k}:${v}`).join(';');
+        if (styleStr) {
+            el.setAttribute('style', styleStr);
+        }
+
+        // Step 8: Strip class and id (WeChat ignores them)
+        el.removeAttribute('class');
+        el.removeAttribute('id');
     }
 
-    // Remove the override style
-    if (styleOverride) styleOverride.remove();
+    // Step 9: Remove <style> tags
+    for (const styleEl of iframeDoc.querySelectorAll('style')) {
+        styleEl.remove();
+    }
+
+    return body.innerHTML;
 }
 
 // ============================================================
@@ -926,35 +1023,14 @@ async function exportWechat() {
     let previewText = '';
 
     if (currentInputMode === 'html' && previewIframe) {
-        // HTML mode: compute actual rendered styles from iframe and inline them
         const doc = previewIframe.contentDocument || previewIframe.contentWindow.document;
         const body = doc.body;
         if (!body || !body.innerHTML.trim()) {
             showToast('请先输入内容', 'error');
             return;
         }
-        inlineComputedStyles(body);
-
-        // body.innerHTML loses body's own style attribute (background, color).
-        // Wrap children in a div that carries the body's visual styles.
-        const bodyComputed = window.getComputedStyle(body);
-        const bgColor = bodyComputed.getPropertyValue('background-color');
-        const textColor = bodyComputed.getPropertyValue('color');
-        const bgImage = bodyComputed.getPropertyValue('background-image');
-        const fontFamily = bodyComputed.getPropertyValue('font-family');
-
-        const wrapper = doc.createElement('div');
-        let wrapperStyle = `color:${textColor};font-family:${fontFamily};`;
-        if (bgColor && bgColor !== 'rgba(0, 0, 0, 0)') wrapperStyle += `background-color:${bgColor};`;
-        if (bgImage && bgImage !== 'none') wrapperStyle += `background-image:${bgImage};`;
-        wrapper.setAttribute('style', wrapperStyle);
-
-        while (body.firstChild) {
-            wrapper.appendChild(body.firstChild);
-        }
-        body.appendChild(wrapper);
-
-        previewHtml = wrapper.outerHTML;
+        // Use the reference approach: parse CSS + resolve variables + filter unsupported
+        previewHtml = inlineStylesForWechat(doc);
         previewText = body.textContent;
     } else {
         previewHtml = preview.innerHTML;
