@@ -1,10 +1,12 @@
 const editor = document.getElementById('editor');
+const htmlEditor = document.getElementById('htmlEditor');
 const preview = document.getElementById('preview');
 const articleTitle = document.getElementById('articleTitle');
 const articleAuthor = document.getElementById('articleAuthor');
 
 let currentTheme = 'simple';
 let currentPreviewMode = 'desktop';
+let currentInputMode = 'markdown';
 let autoSaveTimer = null;
 let currentHash = '';
 let db = null;
@@ -13,16 +15,38 @@ const DB_NAME = 'WeChatEditorDB';
 const DB_VERSION = 1;
 const STORE_NAME = 'images';
 
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function sanitizeHtml(html) {
+    if (typeof DOMPurify !== 'undefined') {
+        return DOMPurify.sanitize(html, {
+            ADD_TAGS: ['style'],
+            ADD_ATTR: ['style', 'class', 'id', 'width', 'height', 'align', 'valign', 'bgcolor', 'background', 'border', 'cellpadding', 'cellspacing'],
+            FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'textarea', 'button', 'select'],
+            FORBID_ATTR: ['onerror', 'onclick', 'onload', 'onmouseover', 'onfocus', 'onblur']
+        });
+    }
+    return html;
+}
+
+// ============================================================
+// IndexedDB - Image Storage
+// ============================================================
+
 function initDB() {
     return new Promise((resolve, reject) => {
         const request = indexedDB.open(DB_NAME, DB_VERSION);
-        
+
         request.onerror = () => reject(request.error);
         request.onsuccess = () => {
             db = request.result;
             resolve(db);
         };
-        
+
         request.onupgradeneeded = (event) => {
             const database = event.target.result;
             if (!database.objectStoreNames.contains(STORE_NAME)) {
@@ -35,44 +59,18 @@ function initDB() {
 
 async function saveImageToDB(base64Data) {
     if (!db) await initDB();
-    
+
     return new Promise((resolve, reject) => {
         const transaction = db.transaction([STORE_NAME], 'readwrite');
         const store = transaction.objectStore(STORE_NAME);
-        
+
         const image = {
             data: base64Data,
             timestamp: Date.now()
         };
-        
+
         const request = store.add(image);
         request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-    });
-}
-
-async function getImagesFromDB() {
-    if (!db) await initDB();
-    
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction([STORE_NAME], 'readonly');
-        const store = transaction.objectStore(STORE_NAME);
-        const request = store.getAll();
-        
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-    });
-}
-
-async function deleteImageFromDB(id) {
-    if (!db) await initDB();
-    
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction([STORE_NAME], 'readwrite');
-        const store = transaction.objectStore(STORE_NAME);
-        const request = store.delete(id);
-        
-        request.onsuccess = () => resolve();
         request.onerror = () => reject(request.error);
     });
 }
@@ -93,6 +91,10 @@ async function uploadImage(file) {
         reader.readAsDataURL(file);
     });
 }
+
+// ============================================================
+// Markdown Syntax Definitions
+// ============================================================
 
 const markdownSyntax = {
     bold: { prefix: '**', suffix: '**' },
@@ -120,40 +122,78 @@ marked.setOptions({
     mangle: false
 });
 
-let isScrolling = false;
-let scrollTimeout = null;
+// ============================================================
+// Rendering
+// ============================================================
 
-function syncScroll(source, target) {
-    if (isScrolling) return;
-    
-    isScrolling = true;
-    
-    const sourceScrollPercentage = source.scrollTop / (source.scrollHeight - source.clientHeight);
-    target.scrollTop = sourceScrollPercentage * (target.scrollHeight - target.clientHeight);
-    
-    clearTimeout(scrollTimeout);
-    scrollTimeout = setTimeout(() => {
-        isScrolling = false;
-    }, 50);
-}
-
-function renderMarkdown() {
-    const markdown = editor.value;
-    const html = marked.parse(markdown);
-    preview.innerHTML = html;
+function renderPreview() {
+    if (currentInputMode === 'markdown') {
+        // Markdown mode: render into the div as before
+        if (!previewIframe) {
+            preview.innerHTML = sanitizeHtml(marked.parse(editor.value));
+        }
+    } else {
+        // HTML mode: render into iframe for full document support
+        renderHtmlInIframe(htmlEditor.value);
+    }
     updateStats();
 }
 
+let previewIframe = null;
+let injectedStyleIds = [];
+
+function renderHtmlInIframe(html) {
+    const previewWrapper = document.querySelector('.preview-wrapper');
+    const previewLabel = previewWrapper.querySelector('.preview-label');
+
+    // Create iframe on first use
+    if (!previewIframe) {
+        // Hide the div preview
+        preview.style.display = 'none';
+
+        // Create iframe
+        previewIframe = document.createElement('iframe');
+        previewIframe.id = 'previewFrame';
+        previewIframe.style.cssText = 'flex:1; width:100%; border:none; background:#fff;';
+        previewWrapper.insertBefore(previewIframe, previewLabel.nextSibling);
+    }
+
+    // Write full HTML into iframe (supports complete documents with <style>, <link>, etc.)
+    const doc = previewIframe.contentDocument || previewIframe.contentWindow.document;
+    doc.open();
+    doc.write(html || '<html><body></body></html>');
+    doc.close();
+}
+
+function destroyHtmlIframe() {
+    if (previewIframe) {
+        previewIframe.remove();
+        previewIframe = null;
+    }
+    // Clean up injected styles
+    injectedStyleIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.remove();
+    });
+    injectedStyleIds = [];
+    preview.style.display = '';
+}
+
 function updateStats() {
-    const markdown = editor.value;
-    const lines = markdown.split('\n');
-    
-    const charCount = markdown.replace(/\s/g, '').length;
-    const paragraphCount = lines.filter(line => line.trim().length > 0).length;
-    const imageCount = (markdown.match(/!\[.*?\]\(.*?\)/g) || []).length;
-    const headingCount = (markdown.match(/^#{1,6}\s+/gm) || []).length;
+    const source = currentInputMode === 'markdown' ? editor.value : htmlEditor.value;
+    const text = source.replace(/<[^>]+>/g, '');
+    const charCount = text.replace(/\s/g, '').length;
+    const paragraphCount = currentInputMode === 'markdown'
+        ? source.split('\n').filter(line => line.trim().length > 0).length
+        : (source.match(/<\/?(p|div|h[1-6]|li|blockquote|tr)[^>]*>/gi) || []).length;
+    const imageCount = currentInputMode === 'markdown'
+        ? (source.match(/!\[.*?\]\(.*?\)/g) || []).length
+        : (source.match(/<img\s/gi) || []).length;
+    const headingCount = currentInputMode === 'markdown'
+        ? (source.match(/^#{1,6}\s+/gm) || []).length
+        : (source.match(/<h[1-6][^>]*>/gi) || []).length;
     const readTime = Math.ceil(charCount / 500);
-    
+
     document.getElementById('charCount').textContent = charCount;
     document.getElementById('paragraphCount').textContent = paragraphCount;
     document.getElementById('imageCount').textContent = imageCount;
@@ -161,14 +201,75 @@ function updateStats() {
     document.getElementById('readTime').textContent = `${readTime} 分钟`;
 }
 
+// ============================================================
+// Input Mode Switching
+// ============================================================
+
+function switchInputMode(mode) {
+    currentInputMode = mode;
+
+    document.querySelectorAll('.input-mode-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector(`.input-mode-btn[data-mode="${mode}"]`).classList.add('active');
+
+    const mdWrapper = document.getElementById('markdownEditorWrapper');
+    const htmlWrapper = document.getElementById('htmlEditorWrapper');
+    const mdToolbar = document.getElementById('markdownToolbar');
+    const themeSection = document.querySelector('.section:has(.theme-buttons)');
+
+    if (mode === 'markdown') {
+        mdWrapper.classList.remove('hidden');
+        htmlWrapper.classList.add('hidden');
+        mdToolbar.style.display = 'flex';
+        destroyHtmlIframe();
+        if (themeSection) themeSection.style.display = '';
+        renderPreview();
+    } else {
+        mdWrapper.classList.add('hidden');
+        htmlWrapper.classList.remove('hidden');
+        mdToolbar.style.display = 'none';
+        // Hide theme section in HTML mode — HTML has its own styles
+        if (themeSection) themeSection.style.display = 'none';
+        renderPreview();
+    }
+
+    localStorage.setItem('inputMode', mode);
+}
+
+// ============================================================
+// Scroll Sync
+// ============================================================
+
+let isScrolling = false;
+let scrollTimeout = null;
+
+function syncScroll(source, target) {
+    if (isScrolling) return;
+    const maxScroll = source.scrollHeight - source.clientHeight;
+    if (maxScroll <= 0) return;
+
+    isScrolling = true;
+
+    const percentage = source.scrollTop / maxScroll;
+    target.scrollTop = percentage * (target.scrollHeight - target.clientHeight);
+
+    clearTimeout(scrollTimeout);
+    scrollTimeout = setTimeout(() => {
+        isScrolling = false;
+    }, 50);
+}
+
+// ============================================================
+// Markdown Toolbar Actions
+// ============================================================
+
 function wrapSelection(action) {
     const syntax = markdownSyntax[action];
     if (!syntax) return;
-    
+
     const start = editor.selectionStart;
     const end = editor.selectionEnd;
     const selectedText = editor.value.substring(start, end);
-    
+
     if (action === 'link') {
         const url = prompt('请输入链接地址:', 'https://');
         if (url) {
@@ -185,69 +286,70 @@ function wrapSelection(action) {
                 try {
                     const result = await uploadImage(file);
                     const alt = prompt('请输入图片描述:', '图片');
-                    const newText = `![${alt || '图片'}](data:image;base64,${result.data.split(',')[1]})`;
+                    const newText = `![${alt || '图片'}](${result.data})`;
                     editor.value = editor.value.substring(0, start) + newText + editor.value.substring(end);
-                    renderMarkdown();
+                    renderPreview();
                     triggerAutoSave();
                 } catch (error) {
-                    alert('图片上传失败: ' + error.message);
+                    showToast('图片上传失败: ' + error.message, 'error');
                 }
             }
         };
         input.click();
     } else if (action === 'table') {
-        const tableText = `
-| 列1 | 列2 | 列3 |
-|-----|-----|-----|
-| 内容1 | 内容2 | 内容3 |
-| 内容4 | 内容5 | 内容6 |
-`;
+        const tableText = `\n| 列1 | 列2 | 列3 |\n|-----|-----|-----|\n| 内容1 | 内容2 | 内容3 |\n| 内容4 | 内容5 | 内容6 |\n`;
         editor.value = editor.value.substring(0, start) + tableText + editor.value.substring(end);
     } else {
         const newText = syntax.prefix + selectedText + syntax.suffix;
         editor.value = editor.value.substring(0, start) + newText + editor.value.substring(end);
     }
-    
-    renderMarkdown();
+
+    renderPreview();
     triggerAutoSave();
 }
 
 function handleToolbarClick(e) {
     const btn = e.target.closest('.toolbar-btn');
     if (!btn) return;
-    
+
     const action = btn.dataset.action;
     if (action === 'undo') {
+        editor.focus();
         document.execCommand('undo');
     } else if (action === 'redo') {
+        editor.focus();
         document.execCommand('redo');
     } else {
         wrapSelection(action);
     }
 }
 
+// ============================================================
+// Theme & Preview Mode
+// ============================================================
+
 function handleThemeClick(e) {
     const btn = e.target.closest('.theme-btn');
     if (!btn) return;
-    
+
     document.querySelectorAll('.theme-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    
+
     currentTheme = btn.dataset.theme;
     document.body.className = `theme-${currentTheme}`;
-    
+
     localStorage.setItem('theme', currentTheme);
 }
 
 function handlePreviewModeClick(e) {
     const btn = e.target.closest('.preview-mode-btn');
     if (!btn) return;
-    
+
     document.querySelectorAll('.preview-mode-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    
+
     currentPreviewMode = btn.dataset.mode;
-    
+
     if (currentPreviewMode === 'mobile') {
         preview.style.maxWidth = '375px';
         preview.style.margin = '0 auto';
@@ -256,6 +358,10 @@ function handlePreviewModeClick(e) {
         preview.style.margin = '0';
     }
 }
+
+// ============================================================
+// Keyboard Shortcuts
+// ============================================================
 
 function handleKeyDown(e) {
     if (e.ctrlKey || e.metaKey) {
@@ -294,35 +400,39 @@ function handleKeyDown(e) {
                 break;
         }
     }
-    
+
     if (e.key === 'Tab') {
         e.preventDefault();
         const start = editor.selectionStart;
         const end = editor.selectionEnd;
         const selectedText = editor.value.substring(start, end);
-        
+
         if (e.shiftKey) {
             editor.value = editor.value.substring(0, start) + selectedText.replace(/^(\s*)/gm, (match, spaces) => spaces.slice(0, -2)) + editor.value.substring(end);
         } else {
             editor.value = editor.value.substring(0, start) + selectedText.replace(/^/gm, '  ') + editor.value.substring(end);
         }
-        
-        renderMarkdown();
+
+        renderPreview();
     }
 }
 
+// ============================================================
+// Paste Handling
+// ============================================================
+
 function handlePaste(e) {
     e.preventDefault();
-    
+
     const items = (e.clipboardData || e.originalEvent.clipboardData).items;
     let hasImage = false;
-    
+
     for (let i = 0; i < items.length; i++) {
         if (items[i].type.indexOf('image') !== -1) {
             hasImage = true;
             const blob = items[i].getAsFile();
             const reader = new FileReader();
-            
+
             reader.onload = async function(event) {
                 try {
                     const base64 = event.target.result;
@@ -333,12 +443,12 @@ function handlePaste(e) {
                     insertImage(event.target.result);
                 }
             };
-            
+
             reader.readAsDataURL(blob);
             break;
         }
     }
-    
+
     if (!hasImage) {
         const text = (e.clipboardData || e.originalEvent.clipboardData).getData('text/plain');
         document.execCommand('insertText', false, text);
@@ -349,34 +459,39 @@ function insertImage(src) {
     const start = editor.selectionStart;
     const end = editor.selectionEnd;
     const imageMarkdown = `![图片](${src})`;
-    
+
     editor.value = editor.value.substring(0, start) + imageMarkdown + editor.value.substring(end);
-    renderMarkdown();
+    renderPreview();
     triggerAutoSave();
 }
+
+// ============================================================
+// Auto-Save
+// ============================================================
 
 function triggerAutoSave() {
     clearTimeout(autoSaveTimer);
     document.getElementById('saveStatus').textContent = '保存中...';
-    
+
     autoSaveTimer = setTimeout(() => {
         saveContent();
     }, 1000);
 }
 
 function saveContent() {
-    const content = editor.value;
+    const content = currentInputMode === 'markdown' ? editor.value : htmlEditor.value;
     const title = articleTitle.value;
     const author = articleAuthor.value;
-    
-    const hash = simpleHash(content + title + author);
-    
+
+    const hash = simpleHash(content + title + author + currentInputMode);
+
     if (hash !== currentHash) {
-        localStorage.setItem('markdownContent', content);
+        localStorage.setItem('markdownContent', editor.value);
+        localStorage.setItem('htmlContent', htmlEditor.value);
         localStorage.setItem('articleTitle', title);
         localStorage.setItem('articleAuthor', author);
         localStorage.setItem('contentHash', hash);
-        
+
         currentHash = hash;
         document.getElementById('saveStatus').textContent = '已自动保存';
     } else {
@@ -385,12 +500,15 @@ function saveContent() {
 }
 
 function loadContent() {
-    const content = localStorage.getItem('markdownContent');
+    const mdContent = localStorage.getItem('markdownContent');
+    const htmlContent = localStorage.getItem('htmlContent');
     const title = localStorage.getItem('articleTitle');
     const author = localStorage.getItem('articleAuthor');
     const theme = localStorage.getItem('theme');
-    
-    if (content) editor.value = content;
+    const inputMode = localStorage.getItem('inputMode');
+
+    if (mdContent) editor.value = mdContent;
+    if (htmlContent) htmlEditor.value = htmlContent;
     if (title) articleTitle.value = title;
     if (author) articleAuthor.value = author;
     if (theme) {
@@ -403,9 +521,12 @@ function loadContent() {
             }
         });
     }
-    
+    if (inputMode) {
+        switchInputMode(inputMode);
+    }
+
     currentHash = localStorage.getItem('contentHash') || '';
-    renderMarkdown();
+    renderPreview();
 }
 
 function simpleHash(str) {
@@ -418,34 +539,39 @@ function simpleHash(str) {
     return hash.toString();
 }
 
+// ============================================================
+// Version Management
+// ============================================================
+
 function saveVersion() {
     const versions = JSON.parse(localStorage.getItem('versions') || '[]');
     const version = {
         id: Date.now(),
         title: articleTitle.value || '未命名文章',
-        content: editor.value,
+        content: currentInputMode === 'markdown' ? editor.value : htmlEditor.value,
+        mode: currentInputMode,
         author: articleAuthor.value,
         timestamp: new Date().toLocaleString('zh-CN')
     };
-    
+
     versions.unshift(version);
     if (versions.length > 10) versions.pop();
-    
+
     localStorage.setItem('versions', JSON.stringify(versions));
-    alert('版本已保存');
+    showToast('版本已保存');
 }
 
 function showVersions() {
     const versions = JSON.parse(localStorage.getItem('versions') || '[]');
     const versionList = document.getElementById('versionList');
-    
+
     if (versions.length === 0) {
         versionList.innerHTML = '<p>暂无历史版本</p>';
     } else {
         versionList.innerHTML = versions.map(v => `
             <div class="version-item">
-                <div class="version-title">${v.title}</div>
-                <div class="version-time">${v.timestamp}</div>
+                <div class="version-title">${escapeHtml(v.title)}</div>
+                <div class="version-time">${escapeHtml(v.timestamp)} · ${v.mode === 'html' ? 'HTML' : 'Markdown'}</div>
                 <div class="version-actions">
                     <button class="version-restore" data-id="${v.id}">恢复</button>
                     <button class="version-delete" data-id="${v.id}">删除</button>
@@ -453,20 +579,26 @@ function showVersions() {
             </div>
         `).join('');
     }
-    
+
     document.getElementById('versionModal').classList.add('show');
 }
 
 function restoreVersion(id) {
     const versions = JSON.parse(localStorage.getItem('versions') || '[]');
     const version = versions.find(v => v.id === id);
-    
+
     if (version) {
         if (confirm('确定要恢复此版本吗？当前内容将被覆盖。')) {
-            editor.value = version.content;
+            const mode = version.mode || 'markdown';
+            switchInputMode(mode);
+            if (mode === 'markdown') {
+                editor.value = version.content;
+            } else {
+                htmlEditor.value = version.content;
+            }
             articleTitle.value = version.title;
             articleAuthor.value = version.author;
-            renderMarkdown();
+            renderPreview();
             triggerAutoSave();
             document.getElementById('versionModal').classList.remove('show');
         }
@@ -482,12 +614,344 @@ function deleteVersion(id) {
     }
 }
 
+// ============================================================
+// WeChat inline-style converter (based on reference implementation)
+// ============================================================
+
+// WeChat unsupported CSS properties - stripped during export
+const WECHAT_UNSUPPORTED = new Set([
+    'position', 'float', 'clear', 'z-index', 'overflow',
+    'display', 'flex', 'flex-direction', 'flex-wrap',
+    'justify-content', 'align-items', 'align-self', 'gap',
+    'grid', 'grid-template', 'grid-template-columns', 'grid-template-rows',
+    'animation', 'animation-name', 'animation-duration', 'animation-delay',
+    'animation-fill-mode', 'animation-timing-function', 'animation-iteration-count',
+    'transition', 'transform', 'transform-origin',
+    'pointer-events', 'user-select', 'cursor',
+    'visibility', 'opacity', 'filter', 'backdrop-filter',
+    'box-shadow', 'text-shadow',
+]);
+
+const WECHAT_INLINE_PROPS = [
+    'color', 'background-color', 'background-image',
+    'background-size', 'background-position', 'background-repeat',
+    'font-family', 'font-size', 'font-weight', 'font-style',
+    'line-height', 'letter-spacing', 'word-spacing',
+    'text-align', 'text-decoration', 'text-transform', 'text-indent',
+    'vertical-align', 'white-space',
+    'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
+    'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+    'border', 'border-top', 'border-right', 'border-bottom', 'border-left',
+    'border-color', 'border-style', 'border-width',
+    'border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color',
+    'border-radius', 'border-collapse', 'border-spacing',
+    'width', 'max-width', 'min-width', 'height',
+    'list-style-type', 'list-style-position',
+    'table-layout', 'caption-side', 'box-sizing',
+];
+
+function parseCSSRules(cssText) {
+    const rules = [];
+    const cleaned = cssText.replace(/\/\*[\s\S]*?\*\//g, '');
+    const regex = /([^{]+)\{([^}]+)\}/g;
+    let m;
+    while ((m = regex.exec(cleaned)) !== null) {
+        const selectors = m[1].trim().split(',');
+        const decl = m[2].trim();
+        for (const sel of selectors) {
+            const s = sel.trim();
+            if (s && !s.startsWith('@') && !s.startsWith('/*')) {
+                rules.push({ selector: s, declarations: decl });
+            }
+        }
+    }
+    return rules;
+}
+
+function parseDeclarations(str) {
+    const map = new Map();
+    for (const part of str.split(';')) {
+        const i = part.indexOf(':');
+        if (i === -1) continue;
+        const prop = part.substring(0, i).trim().toLowerCase();
+        const val = part.substring(i + 1).trim();
+        if (prop && val) map.set(prop, val);
+    }
+    return map;
+}
+
+function inlineStylesForWechat(iframeDoc) {
+    const body = iframeDoc.body;
+    if (!body) return { html: '', bodyStyles: '' };
+
+    // Step 1: Force animations to final state
+    const override = iframeDoc.createElement('style');
+    override.textContent = '*,*::before,*::after{animation:none!important;transition:none!important;opacity:1!important;transform:none!important;}';
+    (iframeDoc.head || iframeDoc.documentElement).appendChild(override);
+
+    // Step 2: Extract CSS rules from <style> tags
+    let allRules = [];
+    for (const styleEl of iframeDoc.querySelectorAll('style')) {
+        if (styleEl === override) continue;
+        allRules = allRules.concat(parseCSSRules(styleEl.textContent || ''));
+    }
+
+    // Step 3: Walk ALL elements including <html> and <body>
+    const htmlEl = iframeDoc.documentElement;
+    const allElements = [htmlEl, body, ...body.querySelectorAll('*')];
+    let bodyStyles = '';
+
+    for (const el of allElements) {
+        const tag = el.tagName.toLowerCase();
+        if (['script', 'style', 'link', 'meta', 'title', 'head'].includes(tag)) continue;
+
+        let mergedDecl = new Map();
+
+        // Parse CSS rules that match this element
+        for (const rule of allRules) {
+            try {
+                if (el.matches(rule.selector)) {
+                    const decls = parseDeclarations(rule.declarations);
+                    for (const [prop, val] of decls) {
+                        mergedDecl.set(prop, val);
+                    }
+                }
+            } catch (e) {
+                // skip invalid selectors (pseudo-elements, etc.)
+            }
+        }
+
+        // Resolve CSS variables via getComputedStyle
+        try {
+            const win = iframeDoc.defaultView;
+            if (!win) continue;
+            const computed = win.getComputedStyle(el);
+            for (const prop of WECHAT_INLINE_PROPS) {
+                if (WECHAT_UNSUPPORTED.has(prop)) continue;
+                const val = computed.getPropertyValue(prop);
+                if (val && val !== 'initial' && val !== 'inherit' && val !== 'normal'
+                    && val !== 'none' && val !== 'auto' && val !== '0px'
+                    && val !== 'medium' && val !== 'baseline') {
+                    mergedDecl.set(prop, val);
+                }
+            }
+        } catch (e) {
+            // getComputedStyle failed, skip computed styles for this element
+        }
+
+        // Existing inline styles win
+        const existingStyle = el.getAttribute('style') || '';
+        if (existingStyle) {
+            const existing = parseDeclarations(existingStyle);
+            for (const [prop, val] of existing) {
+                mergedDecl.set(prop, val);
+            }
+        }
+
+        // Filter unsupported properties
+        const filtered = new Map();
+        for (const [prop, val] of mergedDecl) {
+            if (!WECHAT_UNSUPPORTED.has(prop)) {
+                filtered.set(prop, val);
+            }
+        }
+
+        // Set inline style
+        const styleStr = Array.from(filtered.entries()).map(([k, v]) => `${k}:${v}`).join(';');
+        if (styleStr) {
+            el.setAttribute('style', styleStr);
+        }
+
+        // Capture body styles before stripping
+        if (el === body) {
+            bodyStyles = styleStr;
+        }
+
+        // Strip class and id
+        el.removeAttribute('class');
+        el.removeAttribute('id');
+    }
+
+    // Remove <style> tags
+    for (const styleEl of iframeDoc.querySelectorAll('style')) {
+        styleEl.remove();
+    }
+
+    return { html: body.innerHTML, bodyStyles };
+}
+
+// ============================================================
+// InlineStyleEngine - WeChat Compatible HTML (Markdown mode)
+// ============================================================
+
+const InlineStyleEngine = {
+    getThemeStyles() {
+        const cs = getComputedStyle(document.documentElement);
+        return {
+            primaryColor: cs.getPropertyValue('--primary-color').trim() || '#007aff',
+            textColor: cs.getPropertyValue('--wechat-text-color').trim() || cs.getPropertyValue('--text-color').trim() || '#333',
+            headingColor: cs.getPropertyValue('--wechat-heading-color').trim() || cs.getPropertyValue('--heading-color').trim() || '#1a1a1a',
+            quoteBg: cs.getPropertyValue('--quote-bg').trim() || '#f8f9fa',
+            quoteBorder: cs.getPropertyValue('--quote-border').trim() || '#007aff',
+            quoteColor: cs.getPropertyValue('--quote-color').trim() || '#666',
+            codeBg: cs.getPropertyValue('--code-bg').trim() || '#f5f5f5',
+            codeColor: cs.getPropertyValue('--code-color').trim() || '#e83e8c',
+            codeBlockBg: cs.getPropertyValue('--code-block-bg').trim() || '#282c34',
+            codeBlockColor: cs.getPropertyValue('--code-block-color').trim() || '#abb2bf',
+            linkColor: cs.getPropertyValue('--link-color').trim() || '#007aff',
+            tableBorder: cs.getPropertyValue('--table-border').trim() || '#ddd',
+            tableHeaderBg: cs.getPropertyValue('--table-header-bg').trim() || '#f5f5f5',
+            dividerColor: cs.getPropertyValue('--divider-color').trim() || '#e0e0e0',
+            textSecondary: cs.getPropertyValue('--text-secondary').trim() || '#666',
+        };
+    },
+
+    buildWechatHTML(rawHtml) {
+        const theme = this.getThemeStyles();
+
+        // Parse HTML into a DOM tree
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(rawHtml, 'text/html');
+        const body = doc.body;
+
+        // Walk all elements and apply inline styles
+        this.inlineStyles(body, theme);
+
+        // Build the final self-contained HTML
+        const title = articleTitle.value || '';
+        const author = articleAuthor.value || '';
+
+        let result = '';
+
+        if (title) {
+            result += `<h1 style="font-size: 22px; font-weight: bold; color: ${theme.headingColor}; margin: 0 0 16px 0; padding: 0; line-height: 1.4; text-align: left;">${this.escapeHtml(title)}</h1>`;
+        }
+
+        if (author) {
+            result += `<p style="color: ${theme.textSecondary}; font-size: 14px; margin: 0 0 24px 0; padding: 0;">作者：${this.escapeHtml(author)}</p>`;
+        }
+
+        result += body.innerHTML;
+
+        return result;
+    },
+
+    inlineStyles(element, theme) {
+        const children = Array.from(element.children);
+
+        for (const child of children) {
+            const tag = child.tagName.toLowerCase();
+
+            switch (tag) {
+                case 'h1':
+                    child.setAttribute('style', `font-size: 22px; font-weight: bold; color: ${theme.headingColor}; margin: 1.2em 0 0.6em 0; padding: 0; line-height: 1.4;`);
+                    break;
+                case 'h2':
+                    child.setAttribute('style', `font-size: 20px; font-weight: bold; color: ${theme.headingColor}; margin: 1em 0 0.5em 0; padding: 0; line-height: 1.4;`);
+                    break;
+                case 'h3':
+                    child.setAttribute('style', `font-size: 18px; font-weight: bold; color: ${theme.headingColor}; margin: 1em 0 0.5em 0; padding: 0; line-height: 1.4;`);
+                    break;
+                case 'h4':
+                    child.setAttribute('style', `font-size: 16px; font-weight: bold; color: ${theme.headingColor}; margin: 0.8em 0 0.4em 0; padding: 0; line-height: 1.4;`);
+                    break;
+                case 'p':
+                    child.setAttribute('style', `font-size: 16px; color: ${theme.textColor}; margin: 0 0 16px 0; padding: 0; line-height: 1.75; letter-spacing: 0.5px;`);
+                    break;
+                case 'strong':
+                case 'b':
+                    child.setAttribute('style', `font-weight: bold; color: ${theme.headingColor};`);
+                    break;
+                case 'em':
+                case 'i':
+                    child.setAttribute('style', `font-style: italic;`);
+                    break;
+                case 'u':
+                    child.setAttribute('style', `text-decoration: underline;`);
+                    break;
+                case 's':
+                case 'del':
+                case 'strike':
+                    child.setAttribute('style', `text-decoration: line-through; color: ${theme.textSecondary};`);
+                    break;
+                case 'a':
+                    child.setAttribute('style', `color: ${theme.linkColor}; text-decoration: none; border-bottom: 1px solid ${theme.linkColor};`);
+                    break;
+                case 'blockquote':
+                    child.setAttribute('style', `border-left: 4px solid ${theme.quoteBorder}; background: ${theme.quoteBg}; color: ${theme.quoteColor}; padding: 12px 16px; margin: 16px 0; border-radius: 0 4px 4px 0; font-size: 15px; line-height: 1.6;`);
+                    break;
+                case 'ul':
+                    child.setAttribute('style', `margin: 0 0 16px 0; padding-left: 2em; color: ${theme.textColor};`);
+                    break;
+                case 'ol':
+                    child.setAttribute('style', `margin: 0 0 16px 0; padding-left: 2em; color: ${theme.textColor};`);
+                    break;
+                case 'li':
+                    child.setAttribute('style', `margin-bottom: 8px; font-size: 16px; line-height: 1.75; color: ${theme.textColor};`);
+                    break;
+                case 'pre':
+                    child.setAttribute('style', `background: ${theme.codeBlockBg}; color: ${theme.codeBlockColor}; padding: 16px; border-radius: 8px; overflow-x: auto; margin: 16px 0; font-family: 'Menlo', 'Consolas', monospace; font-size: 14px; line-height: 1.5; white-space: pre-wrap; word-break: break-all;`);
+                    break;
+                case 'code':
+                    if (child.parentElement && child.parentElement.tagName.toLowerCase() === 'pre') {
+                        child.setAttribute('style', `background: transparent; color: inherit; padding: 0; font-family: inherit; font-size: inherit;`);
+                    } else {
+                        child.setAttribute('style', `background: ${theme.codeBg}; color: ${theme.codeColor}; padding: 2px 6px; border-radius: 4px; font-family: 'Menlo', 'Consolas', monospace; font-size: 14px;`);
+                    }
+                    break;
+                case 'img':
+                    child.setAttribute('style', `max-width: 100%; height: auto; display: block; margin: 16px auto; border-radius: 4px;`);
+                    break;
+                case 'hr':
+                    child.setAttribute('style', `border: none; border-top: 1px solid ${theme.dividerColor}; margin: 24px 0;`);
+                    break;
+                case 'table':
+                    child.setAttribute('style', `width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 15px;`);
+                    break;
+                case 'thead':
+                case 'tbody':
+                    // no style needed
+                    break;
+                case 'tr':
+                    child.setAttribute('style', `border-bottom: 1px solid ${theme.tableBorder};`);
+                    break;
+                case 'th':
+                    child.setAttribute('style', `background: ${theme.tableHeaderBg}; font-weight: bold; padding: 10px 12px; border: 1px solid ${theme.tableBorder}; text-align: left; color: ${theme.headingColor};`);
+                    break;
+                case 'td':
+                    child.setAttribute('style', `padding: 10px 12px; border: 1px solid ${theme.tableBorder}; color: ${theme.textColor};`);
+                    break;
+                case 'span':
+                    // Preserve existing inline styles on spans
+                    break;
+                case 'div':
+                case 'section':
+                    child.setAttribute('style', `margin: 0; padding: 0;`);
+                    break;
+                default:
+                    break;
+            }
+
+            // Recursively process children
+            if (child.children && child.children.length > 0) {
+                this.inlineStyles(child, theme);
+            }
+        }
+    },
+
+    escapeHtml
+};
+
+// ============================================================
+// Export Functions
+// ============================================================
+
 function exportMarkdown() {
     const title = articleTitle.value || '未命名文章';
     const content = editor.value;
-    
+
     const markdown = `# ${title}\n\n${articleAuthor.value ? `作者：${articleAuthor.value}\n\n` : ''}${content}`;
-    
+
     const blob = new Blob([markdown], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -501,16 +965,16 @@ function exportMarkdown() {
 
 function exportPdf() {
     const title = articleTitle.value || '未命名文章';
-    const content = editor.value;
-    const html = marked.parse(content);
-    
+    const content = currentInputMode === 'markdown' ? editor.value : htmlEditor.value;
+    const html = currentInputMode === 'markdown' ? marked.parse(content) : content;
+
     const printWindow = window.open('', '_blank');
     printWindow.document.write(`
         <!DOCTYPE html>
         <html lang="zh-CN">
         <head>
             <meta charset="UTF-8">
-            <title>${title}</title>
+            <title>${escapeHtml(title)}</title>
             <style>
                 body {
                     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
@@ -525,74 +989,23 @@ function exportPdf() {
                     margin-bottom: 0.5em;
                     color: #1a1a1a;
                 }
-                h1 {
-                    font-size: 2em;
-                    border-bottom: 2px solid #e0e0e0;
-                    padding-bottom: 0.3em;
-                }
-                p {
-                    margin: 1em 0;
-                }
-                code {
-                    background: #f4f4f4;
-                    padding: 2px 6px;
-                    border-radius: 3px;
-                    font-family: 'Courier New', monospace;
-                }
-                pre {
-                    background: #f4f4f4;
-                    padding: 16px;
-                    border-radius: 8px;
-                    overflow-x: auto;
-                }
-                pre code {
-                    background: none;
-                    padding: 0;
-                }
-                blockquote {
-                    border-left: 4px solid #007aff;
-                    padding-left: 16px;
-                    margin: 1em 0;
-                    color: #666;
-                    background: #f8f9fa;
-                    padding: 12px 16px;
-                }
-                img {
-                    max-width: 100%;
-                    height: auto;
-                    display: block;
-                    margin: 20px auto;
-                }
-                table {
-                    border-collapse: collapse;
-                    width: 100%;
-                    margin: 20px 0;
-                }
-                th, td {
-                    border: 1px solid #ddd;
-                    padding: 8px 12px;
-                    text-align: left;
-                }
-                th {
-                    background: #f4f4f4;
-                }
-                hr {
-                    border: none;
-                    border-top: 2px solid #e0e0e0;
-                    margin: 30px 0;
-                }
-                a {
-                    color: #007aff;
-                    text-decoration: none;
-                }
-                a:hover {
-                    text-decoration: underline;
-                }
+                h1 { font-size: 2em; border-bottom: 2px solid #e0e0e0; padding-bottom: 0.3em; }
+                p { margin: 1em 0; }
+                code { background: #f4f4f4; padding: 2px 6px; border-radius: 3px; font-family: 'Courier New', monospace; }
+                pre { background: #f4f4f4; padding: 16px; border-radius: 8px; overflow-x: auto; }
+                pre code { background: none; padding: 0; }
+                blockquote { border-left: 4px solid #007aff; padding: 12px 16px; margin: 1em 0; color: #666; background: #f8f9fa; }
+                img { max-width: 100%; height: auto; display: block; margin: 20px auto; }
+                table { border-collapse: collapse; width: 100%; margin: 20px 0; }
+                th, td { border: 1px solid #ddd; padding: 8px 12px; text-align: left; }
+                th { background: #f4f4f4; }
+                hr { border: none; border-top: 2px solid #e0e0e0; margin: 30px 0; }
+                a { color: #007aff; text-decoration: none; }
             </style>
         </head>
         <body>
-            <h1>${title}</h1>
-            ${articleAuthor.value ? `<p style="color: #666; margin-bottom: 30px;">作者：${articleAuthor.value}</p>` : ''}
+            <h1>${escapeHtml(title)}</h1>
+            ${articleAuthor.value ? `<p style="color: #666; margin-bottom: 30px;">作者：${escapeHtml(articleAuthor.value)}</p>` : ''}
             ${html}
         </body>
         </html>
@@ -601,40 +1014,121 @@ function exportPdf() {
     printWindow.print();
 }
 
-function exportWechat() {
-    const title = articleTitle.value || '未命名文章';
-    const content = editor.value;
-    const html = marked.parse(content);
-    
-    const wechatHtml = `
-        <section style="max-width: 677px; margin: 0 auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;">
-            <h1 style="font-size: 22px; font-weight: bold; color: #1a1a1a; margin-bottom: 20px; text-align: left;">${title}</h1>
-            ${articleAuthor.value ? `<p style="color: #888; font-size: 14px; margin-bottom: 30px;">作者：${articleAuthor.value}</p>` : ''}
-            <section style="font-size: 16px; line-height: 1.8; color: #333;">
-                ${html}
-            </section>
-        </section>
-    `;
-    
-    navigator.clipboard.writeText(wechatHtml).then(() => {
-        alert('已复制到剪贴板，可以直接粘贴到公众号编辑器中');
-    }).catch(() => {
-        const textarea = document.createElement('textarea');
-        textarea.value = wechatHtml;
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textarea);
-        alert('已复制到剪贴板，可以直接粘贴到公众号编辑器中');
-    });
+/**
+ * Copy WeChat-compatible HTML to clipboard.
+ *
+ * Uses Clipboard API write() to place both text/html and text/plain
+ * on the clipboard. WeChat's editor reads text/html and preserves
+ * inline styles, so the formatting is preserved when pasting.
+ */
+async function exportWechat() {
+    let previewHtml = '';
+    let previewText = '';
+    let wechatHtml = '';
+
+    if (currentInputMode === 'html' && previewIframe) {
+        const doc = previewIframe.contentDocument || previewIframe.contentWindow.document;
+        const body = doc.body;
+        if (!body || !body.innerHTML.trim()) {
+            showToast('请先输入内容', 'error');
+            return;
+        }
+        const result = inlineStylesForWechat(doc);
+        previewHtml = result.html;
+        previewText = body.textContent;
+
+        // Wrap body content with body's own styles (background, color, font)
+        wechatHtml = `<div style="${result.bodyStyles}">${previewHtml}</div>`;
+    } else {
+        previewHtml = preview.innerHTML;
+        previewText = preview.textContent;
+        wechatHtml = InlineStyleEngine.buildWechatHTML(previewHtml);
+    }
+
+    if (!previewHtml.trim()) {
+        showToast('请先输入内容', 'error');
+        return;
+    }
+
+    // Wrap in a section with max-width for WeChat reading experience
+    const wrappedHtml = `<section style="max-width: 578px; margin: 0 auto; padding: 0;">${wechatHtml}</section>`;
+
+    try {
+        // Use Clipboard API to write HTML + plain text
+        const htmlBlob = new Blob([wrappedHtml], { type: 'text/html' });
+        const textBlob = new Blob([previewText], { type: 'text/plain' });
+
+        await navigator.clipboard.write([
+            new ClipboardItem({
+                'text/html': htmlBlob,
+                'text/plain': textBlob
+            })
+        ]);
+
+        showToast('已复制公众号格式，直接粘贴到公众号编辑器即可', 'success');
+    } catch (err) {
+        // Fallback: use a hidden contenteditable div to copy rich text
+        try {
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = wrappedHtml;
+            tempDiv.style.position = 'fixed';
+            tempDiv.style.left = '0';
+            tempDiv.style.top = '0';
+            tempDiv.style.width = '0';
+            tempDiv.style.height = '0';
+            tempDiv.style.overflow = 'hidden';
+            tempDiv.style.opacity = '0';
+            tempDiv.style.pointerEvents = 'none';
+            tempDiv.contentEditable = 'true';
+            document.body.appendChild(tempDiv);
+
+            const range = document.createRange();
+            range.selectNodeContents(tempDiv);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+
+            document.execCommand('copy');
+            selection.removeAllRanges();
+            document.body.removeChild(tempDiv);
+
+            showToast('已复制公众号格式（兼容模式），直接粘贴到公众号编辑器即可', 'success');
+        } catch (fallbackErr) {
+            showToast('复制失败，请手动选择预览内容复制', 'error');
+        }
+    }
 }
+
+// ============================================================
+// Toast Notification
+// ============================================================
+
+function showToast(message, type = '') {
+    const toast = document.getElementById('toast');
+    toast.textContent = message;
+    toast.className = 'toast' + (type ? ` ${type}` : '');
+
+    // Force reflow for re-triggering animation
+    void toast.offsetWidth;
+    toast.classList.add('show');
+
+    setTimeout(() => {
+        toast.classList.remove('show');
+    }, 3000);
+}
+
+// ============================================================
+// Content Management
+// ============================================================
 
 function clearContent() {
     if (confirm('确定要清空所有内容吗？此操作不可撤销。')) {
         editor.value = '';
+        htmlEditor.value = '';
         articleTitle.value = '';
         articleAuthor.value = '';
-        renderMarkdown();
+        destroyHtmlIframe();
+        renderPreview();
         triggerAutoSave();
     }
 }
@@ -651,9 +1145,22 @@ function resetTheme() {
     localStorage.setItem('theme', 'simple');
 }
 
+// ============================================================
+// Event Listeners
+// ============================================================
+
+// Input mode toggle
+document.querySelector('.input-mode-buttons').addEventListener('click', (e) => {
+    const btn = e.target.closest('.input-mode-btn');
+    if (!btn) return;
+    switchInputMode(btn.dataset.mode);
+});
+
+// Markdown toolbar
 document.querySelector('.toolbar').addEventListener('click', handleToolbarClick);
 document.querySelector('.theme-buttons').addEventListener('click', handleThemeClick);
 document.querySelector('.preview-mode-buttons').addEventListener('click', handlePreviewModeClick);
+
 document.querySelector('.version-buttons').addEventListener('click', (e) => {
     if (e.target.id === 'saveVersion') saveVersion();
     if (e.target.id === 'showVersions') showVersions();
@@ -667,6 +1174,8 @@ document.querySelector('.action-buttons').addEventListener('click', (e) => {
     if (e.target.id === 'clearContent') clearContent();
     if (e.target.id === 'resetTheme') resetTheme();
 });
+
+// Modal
 document.querySelector('.modal-close').addEventListener('click', () => {
     document.getElementById('versionModal').classList.remove('show');
 });
@@ -684,16 +1193,42 @@ document.getElementById('versionList').addEventListener('click', (e) => {
     }
 });
 
+// Editor events
 editor.addEventListener('input', () => {
-    renderMarkdown();
+    renderPreview();
     triggerAutoSave();
 });
 editor.addEventListener('keydown', handleKeyDown);
 editor.addEventListener('paste', handlePaste);
+
+// HTML editor events - live rendering
+htmlEditor.addEventListener('input', () => {
+    renderPreview();
+    triggerAutoSave();
+});
+// Allow native paste in HTML editor (don't intercept like Markdown editor)
+htmlEditor.addEventListener('paste', () => {
+    setTimeout(() => {
+        renderPreview();
+        triggerAutoSave();
+    }, 10);
+});
+
+// Scroll sync
 editor.addEventListener('scroll', () => syncScroll(editor, preview));
-preview.addEventListener('scroll', () => syncScroll(preview, editor));
+htmlEditor.addEventListener('scroll', () => syncScroll(htmlEditor, preview));
+preview.addEventListener('scroll', () => {
+    const activeEditor = currentInputMode === 'markdown' ? editor : htmlEditor;
+    syncScroll(preview, activeEditor);
+});
+
+// Auto-save triggers
 articleTitle.addEventListener('input', triggerAutoSave);
 articleAuthor.addEventListener('input', triggerAutoSave);
+
+// ============================================================
+// Initialization
+// ============================================================
 
 initDB().then(() => {
     loadContent();
