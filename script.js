@@ -934,7 +934,27 @@ async function exportWechat() {
             return;
         }
         inlineComputedStyles(body);
-        previewHtml = body.innerHTML;
+
+        // body.innerHTML loses body's own style attribute (background, color).
+        // Wrap children in a div that carries the body's visual styles.
+        const bodyComputed = window.getComputedStyle(body);
+        const bgColor = bodyComputed.getPropertyValue('background-color');
+        const textColor = bodyComputed.getPropertyValue('color');
+        const bgImage = bodyComputed.getPropertyValue('background-image');
+        const fontFamily = bodyComputed.getPropertyValue('font-family');
+
+        const wrapper = doc.createElement('div');
+        let wrapperStyle = `color:${textColor};font-family:${fontFamily};`;
+        if (bgColor && bgColor !== 'rgba(0, 0, 0, 0)') wrapperStyle += `background-color:${bgColor};`;
+        if (bgImage && bgImage !== 'none') wrapperStyle += `background-image:${bgImage};`;
+        wrapper.setAttribute('style', wrapperStyle);
+
+        while (body.firstChild) {
+            wrapper.appendChild(body.firstChild);
+        }
+        body.appendChild(wrapper);
+
+        previewHtml = wrapper.outerHTML;
         previewText = body.textContent;
     } else {
         previewHtml = preview.innerHTML;
@@ -956,7 +976,13 @@ async function exportWechat() {
     }
 
     // Wrap in a section with max-width for WeChat reading experience
-    const wrappedHtml = `<section style="max-width: 578px; margin: 0 auto; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;">${wechatHtml}</section>`;
+    let wrappedHtml;
+    if (currentInputMode === 'html' && previewIframe) {
+        // HTML mode: styles already inlined, just wrap with max-width
+        wrappedHtml = `<section style="max-width: 578px; margin: 0 auto; padding: 0;">${wechatHtml}</section>`;
+    } else {
+        wrappedHtml = `<section style="max-width: 578px; margin: 0 auto; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;">${wechatHtml}</section>`;
+    }
 
     try {
         // Use Clipboard API to write HTML + plain text
