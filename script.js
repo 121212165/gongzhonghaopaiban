@@ -25,7 +25,9 @@ function sanitizeHtml(html) {
     if (typeof DOMPurify !== 'undefined') {
         return DOMPurify.sanitize(html, {
             ADD_TAGS: ['style'],
-            ADD_ATTR: ['style']
+            ADD_ATTR: ['style', 'class', 'id', 'width', 'height', 'align', 'valign', 'bgcolor', 'background', 'border', 'cellpadding', 'cellspacing'],
+            FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'textarea', 'button', 'select'],
+            FORBID_ATTR: ['onerror', 'onclick', 'onload', 'onmouseover', 'onfocus', 'onblur']
         });
     }
     return html;
@@ -971,6 +973,13 @@ editor.addEventListener('paste', handlePaste);
 htmlEditor.addEventListener('input', () => {
     renderPreview();
     triggerAutoSave();
+});
+// Allow native paste in HTML editor (don't intercept like Markdown editor)
+htmlEditor.addEventListener('paste', () => {
+    setTimeout(() => {
+        renderPreview();
+        triggerAutoSave();
+    }, 10);
 });
 
 // Scroll sync
