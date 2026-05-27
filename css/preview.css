@@ -1,0 +1,135 @@
+/* 预览区 Markdown 渲染样式 */
+
+.preview-content h1 {
+    font-size: var(--heading-size-h1);
+    color: var(--heading-color);
+    margin: 1em 0 0.5em;
+    font-weight: bold;
+}
+
+.preview-content h2 {
+    font-size: var(--heading-size-h2);
+    color: var(--heading-color);
+    margin: 1em 0 0.5em;
+    font-weight: bold;
+}
+
+.preview-content h3 {
+    font-size: var(--heading-size-h3);
+    color: var(--heading-color);
+    margin: 1em 0 0.5em;
+    font-weight: bold;
+}
+
+.preview-content h4 {
+    font-size: var(--heading-size-h4);
+    color: var(--heading-color);
+    margin: 1em 0 0.5em;
+    font-weight: bold;
+}
+
+.preview-content p {
+    font-size: var(--font-size-base);
+    line-height: var(--line-height-base);
+    margin-bottom: var(--paragraph-spacing);
+    color: var(--text-color);
+}
+
+.preview-content strong {
+    font-weight: bold;
+}
+
+.preview-content em {
+    font-style: italic;
+}
+
+.preview-content a {
+    color: var(--link-color);
+    text-decoration: none;
+}
+
+.preview-content a:hover {
+    text-decoration: underline;
+    color: var(--link-hover);
+}
+
+.preview-content ul,
+.preview-content ol {
+    margin-bottom: var(--paragraph-spacing);
+    padding-left: 2em;
+}
+
+.preview-content li {
+    margin-bottom: 0.5em;
+    line-height: var(--line-height-base);
+}
+
+.preview-content blockquote {
+    border-left: 4px solid var(--quote-border);
+    padding: 15px 20px;
+    margin: 20px 0;
+    background: var(--quote-bg);
+    color: var(--quote-color);
+    border-radius: 0 8px 8px 0;
+}
+
+.preview-content code {
+    background: var(--code-bg);
+    color: var(--code-color);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;
+    font-size: 0.9em;
+}
+
+.preview-content pre {
+    background: var(--code-block-bg);
+    color: var(--code-block-color);
+    padding: 20px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 20px 0;
+}
+
+.preview-content pre code {
+    background: transparent;
+    color: inherit;
+    padding: 0;
+}
+
+.preview-content img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 20px auto;
+    border-radius: 8px;
+}
+
+.preview-content hr {
+    border: none;
+    border-top: 2px solid var(--divider-color);
+    margin: 30px 0;
+}
+
+.preview-content table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 20px 0;
+}
+
+.preview-content th,
+.preview-content td {
+    border: 1px solid var(--table-border);
+    padding: 12px;
+    text-align: left;
+}
+
+.preview-content th {
+    background: var(--table-header-bg);
+    font-weight: bold;
+}
+
+.preview-content del {
+    text-decoration: line-through;
+    color: var(--text-secondary);
+}
