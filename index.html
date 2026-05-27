@@ -3,8 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none';">
     <title>公众号排版器 - Markdown 编辑器</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="css/variables.css">
+    <link rel="stylesheet" href="css/layout.css">
+    <link rel="stylesheet" href="css/components.css">
+    <link rel="stylesheet" href="css/preview.css">
+    <link rel="stylesheet" href="css/responsive.css">
+    <link rel="stylesheet" href="css/wechat-view.css">
 </head>
 <body>
     <div class="app-container">
@@ -214,11 +220,19 @@
 
             <div class="editor-container">
                 <div class="editor-wrapper">
-                    <div class="editor-label">Markdown 编辑</div>
+                    <div class="mode-tabs">
+                        <button class="mode-tab active" data-editor-mode="markdown">Markdown</button>
+                        <button class="mode-tab" data-editor-mode="html">HTML</button>
+                    </div>
                     <textarea id="editor" placeholder="开始输入 Markdown 内容...&#10;&#10;# 标题&#10;&#10;## 二级标题&#10;&#10;这是一段普通文本，**加粗**、*斜体*、~~删除线~~&#10;&#10;- 无序列表项&#10;- 另一项&#10;&#10;1. 有序列表项&#10;2. 另一项&#10;&#10;> 引用内容&#10;&#10;```javascript&#10;console.log('Hello World');&#10;```"></textarea>
                 </div>
 
                 <div class="preview-wrapper">
+                    <div class="view-mode-buttons">
+                        <button type="button" class="view-mode-btn active" data-view="editor">编辑视图</button>
+                        <button type="button" class="view-mode-btn" data-view="wechat">公众号视图</button>
+                        <button type="button" class="view-mode-btn" data-view="mobile">手机视图</button>
+                    </div>
                     <div class="preview-label">实时预览</div>
                     <div id="preview" class="preview-content"></div>
                 </div>
@@ -238,8 +252,7 @@
         </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js" crossorigin="anonymous"></script>
-    <script src="script.js"></script>
+    <script type="module" src="/src/app.js"></script>
+    <script type="module" src="/src/view-integration.js"></script>
 </body>
 </html>
