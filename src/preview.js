@@ -3,6 +3,9 @@
  * 职责：Markdown → HTML 渲染、滚动同步、预览模式管理
  */
 
+import { marked } from 'marked';
+import { sanitizeHtml, PURIFY_CONFIG_STRICT } from './config/security.js';
+
 let previewElement = null;
 let syncRaf = null;
 let currentMode = 'desktop';
@@ -12,10 +15,10 @@ export function initPreview(previewEl) {
   previewElement = previewEl;
 }
 
-/** 渲染 Markdown 为 HTML（使用全局 marked 和 DOMPurify） */
+/** 渲染 Markdown 为 HTML */
 export function renderMarkdown(text) {
   if (!previewElement) return '';
-  const html = DOMPurify.sanitize(marked.parse(text));
+  const html = sanitizeHtml(marked.parse(text), PURIFY_CONFIG_STRICT);
   previewElement.innerHTML = html;
   return html;
 }
