@@ -1,134 +1,102 @@
-import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
-import { setupDOM, loadScript, getStorageStore, clearStorageStore } from '../helpers/setup.js';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { clearStorageStore } from '../helpers/setup.js';
+import { saveVersion, getVersions, findVersion, removeVersion } from '../../src/version.js';
+import { simpleHash } from '../../src/utils.js';
 
 // ---------------------------------------------------------------------------
-// Storage behaviour tests
-//
-// These verify that saveContent / loadContent persist and restore article
-// data correctly, and that version management works.
+// Storage behaviour tests — import src/ modules directly
 // ---------------------------------------------------------------------------
-
-beforeAll(async () => {
-  setupDOM();
-  await loadScript();
-});
 
 beforeEach(() => {
-  vi.clearAllMocks();
   clearStorageStore();
-
-  document.getElementById('editor').value = '';
-  document.getElementById('articleTitle').value = '';
-  document.getElementById('articleAuthor').value = '';
-  document.getElementById('saveStatus').textContent = '已自动保存';
-  if ('currentHash' in globalThis) globalThis.currentHash = '';
 });
 
-describe('saveContent / loadContent', () => {
-  it('writes editor content, title, author and hash into localStorage', () => {
-    document.getElementById('editor').value = 'Hello';
-    document.getElementById('articleTitle').value = 'Title';
-    document.getElementById('articleAuthor').value = 'Author';
-
-    globalThis.saveContent();
-
-    // Check localStorage
-    expect(localStorage.getItem('markdownContent')).toBe('Hello');
-    expect(localStorage.getItem('articleTitle')).toBe('Title');
-    expect(localStorage.getItem('articleAuthor')).toBe('Author');
-    expect(localStorage.getItem('contentHash')).toBeDefined();
-    expect(typeof localStorage.getItem('contentHash')).toBe('string');
+describe('simpleHash', () => {
+  it('produces a deterministic hash string', () => {
+    const hash1 = simpleHash('Hello');
+    const hash2 = simpleHash('Hello');
+    expect(hash1).toBe(hash2);
+    expect(typeof hash1).toBe('string');
   });
 
-  it('restores editor value, title and author from localStorage via loadContent', () => {
-    // Pre-populate localStorage
-    localStorage.setItem('markdownContent', 'Restored content');
-    localStorage.setItem('articleTitle', 'Restored Title');
-    localStorage.setItem('articleAuthor', 'Restored Author');
-
-    globalThis.loadContent();
-
-    expect(document.getElementById('editor').value).toBe('Restored content');
-    expect(document.getElementById('articleTitle').value).toBe('Restored Title');
-    expect(document.getElementById('articleAuthor').value).toBe('Restored Author');
-  });
-
-  it('does not write to localStorage again when content has not changed', () => {
-    // Set a known content hash to simulate already-saved state
-    const editor = document.getElementById('editor');
-    editor.value = 'Stable content';
-    document.getElementById('articleTitle').value = 'Stable Title';
-    document.getElementById('articleAuthor').value = 'Author';
-
-    // First save - set the currentHash
-    globalThis.saveContent();
-    const hashAfterFirstSave = localStorage.getItem('contentHash');
-
-    // Save again with identical content — hash should match, no duplicates
-    globalThis.saveContent();
-    const hashAfterSecondSave = localStorage.getItem('contentHash');
-
-    // Hash should remain the same (not changed by second save)
-    expect(hashAfterSecondSave).toBe(hashAfterFirstSave);
-  });
-
-  it('updates saveStatus text after saving', () => {
-    document.getElementById('editor').value = 'Anything';
-    globalThis.saveContent();
-
-    expect(document.getElementById('saveStatus').textContent).toBe('已自动保存');
+  it('produces different hashes for different inputs', () => {
+    const hash1 = simpleHash('Hello');
+    const hash2 = simpleHash('World');
+    expect(hash1).not.toBe(hash2);
   });
 });
 
 describe('version management', () => {
   it('saveVersion stores a version snapshot in localStorage', () => {
-    document.getElementById('editor').value = 'Version 1 content';
-    document.getElementById('articleTitle').value = 'Version 1 Title';
+    saveVersion('Version 1 Title', 'Version 1 content', 'Author');
 
-    globalThis.saveVersion();
-
-    const versions = JSON.parse(localStorage.getItem('versions'));
+    const versions = getVersions();
     expect(versions.length).toBe(1);
     expect(versions[0].content).toBe('Version 1 content');
     expect(versions[0].title).toBe('Version 1 Title');
+    expect(versions[0].author).toBe('Author');
+    expect(versions[0].id).toBeDefined();
+    expect(versions[0].timestamp).toBeDefined();
   });
 
-  it('deleteVersion removes the specified version from the list', () => {
-    // Save two versions
-    document.getElementById('editor').value = 'First';
-    document.getElementById('articleTitle').value = 'Doc 1';
-    globalThis.saveVersion();
+  it('saveVersion prepends new versions (newest first)', () => {
+    saveVersion('First', 'content-1', '');
+    saveVersion('Second', 'content-2', '');
 
-    document.getElementById('editor').value = 'Second';
-    document.getElementById('articleTitle').value = 'Doc 2';
-    globalThis.saveVersion();
-
-    const versions = JSON.parse(localStorage.getItem('versions'));
+    const versions = getVersions();
     expect(versions.length).toBe(2);
-    const idToDelete = versions[0].id;
-
-    // confirm() is mocked to return true
-    globalThis.deleteVersion(idToDelete);
-
-    const remaining = JSON.parse(localStorage.getItem('versions'));
-    expect(remaining.length).toBe(1);
-    expect(remaining[0].content).toBe('First');
+    expect(versions[0].title).toBe('Second');
+    expect(versions[1].title).toBe('First');
   });
 
-  it('restoreVersion loads version content back into the editor', () => {
-    document.getElementById('editor').value = 'To be restored';
-    document.getElementById('articleTitle').value = 'The Title';
-    globalThis.saveVersion();
+  it('saveVersion caps at 10 versions', () => {
+    for (let i = 0; i < 12; i++) {
+      saveVersion(`V${i}`, `content-${i}`, '');
+    }
 
-    // Change editor to something else
-    document.getElementById('editor').value = 'New content';
-    document.getElementById('articleTitle').value = 'New Title';
+    const versions = getVersions();
+    expect(versions.length).toBe(10);
+    expect(versions[0].title).toBe('V11');
+  });
 
-    // Restore the version — confirm() returns true
-    const versions = JSON.parse(localStorage.getItem('versions'));
-    globalThis.restoreVersion(versions[0].id);
+  it('removeVersion removes the specified version from the list', () => {
+    saveVersion('First', 'content-first', '');
+    saveVersion('Second', 'content-second', '');
 
-    expect(document.getElementById('editor').value).toBe('To be restored');
-    expect(document.getElementById('articleTitle').value).toBe('The Title');
+    const versions = getVersions();
+    expect(versions.length).toBe(2);
+    const idToDelete = versions[0].id; // 'Second' (newest)
+
+    const remaining = removeVersion(idToDelete);
+
+    expect(remaining.length).toBe(1);
+    expect(remaining[0].content).toBe('content-first');
+
+    // Also verify localStorage was updated
+    const fromStorage = getVersions();
+    expect(fromStorage.length).toBe(1);
+    expect(fromStorage[0].content).toBe('content-first');
+  });
+
+  it('findVersion returns the version with the given id', () => {
+    saveVersion('Target', 'find-me', '');
+    const versions = getVersions();
+    const id = versions[0].id;
+
+    const found = findVersion(id);
+    expect(found).not.toBeNull();
+    expect(found.content).toBe('find-me');
+  });
+
+  it('findVersion returns null for non-existent id', () => {
+    saveVersion('Only', 'one', '');
+    const found = findVersion(999999);
+    expect(found).toBeNull();
+  });
+
+  it('saveVersion uses default title when none is provided', () => {
+    saveVersion('', 'content', '');
+    const versions = getVersions();
+    expect(versions[0].title).toBe('未命名文章');
   });
 });

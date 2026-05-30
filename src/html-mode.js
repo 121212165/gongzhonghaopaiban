@@ -7,6 +7,8 @@
  * 切换回 Markdown 时保留原内容，不破坏数据
  */
 
+import { sanitizeHtml, PURIFY_CONFIG_STRICT } from './config/security.js';
+
 let currentMode = 'markdown'; // 'markdown' | 'html'
 let editorElement = null;
 let previewElement = null;
@@ -28,7 +30,7 @@ export function initHtmlMode(editorEl, previewEl) {
     editorElement.addEventListener('input', () => {
       if (currentMode === 'html' && previewElement) {
         setTimeout(() => {
-          previewElement.innerHTML = editorElement.value;
+          previewElement.innerHTML = sanitizeHtml(editorElement.value, PURIFY_CONFIG_STRICT);
         }, 200);
       }
     });

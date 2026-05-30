@@ -1,6 +1,6 @@
 /**
  * 应用入口模块
- * 职责：初始化所有模块、事件绑定、自动保存、Toast
+ * 职责：初始化所有模块、事件绑定、自动保存
  */
 
 import { initEditor, getValue, setValue, pushUndoState, undo, redo,
@@ -12,6 +12,7 @@ import { initImageDB, saveImage, readFileAsDataURL, removeImage } from './image.
 import { saveVersion, getVersions, findVersion, removeVersion } from './version.js';
 import { exportMarkdown, exportPdf, exportWechat } from './export.js';
 import { simpleHash } from './utils.js';
+import { showToast } from './toast.js';
 
 // ==================== DOM 引用 ====================
 const $ = id => document.getElementById(id);
@@ -374,35 +375,6 @@ function handleActionButtons(e) {
     if (defaultBtn) defaultBtn.classList.add('active');
     showToast('已重置为简约主题');
   }
-}
-
-// ==================== Toast 消息 ====================
-function showToast(message, type = 'success') {
-  const toast = document.createElement('div');
-  toast.textContent = message;
-  toast.style.cssText = `
-    position: fixed; bottom: 24px; right: 24px; z-index: 2000;
-    padding: 12px 24px; border-radius: 8px;
-    background: ${type === 'error' ? '#ff3b30' : '#4cd964'};
-    color: #fff; font-size: 14px; line-height: 1.4;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-    opacity: 0; transform: translateY(10px);
-    transition: opacity 0.3s, transform 0.3s;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  `;
-  document.body.appendChild(toast);
-
-  // 触发动画
-  requestAnimationFrame(() => {
-    toast.style.opacity = '1';
-    toast.style.transform = 'translateY(0)';
-  });
-
-  setTimeout(() => {
-    toast.style.opacity = '0';
-    toast.style.transform = 'translateY(10px)';
-    setTimeout(() => toast.remove(), 300);
-  }, 3000);
 }
 
 // ==================== 启动 ====================

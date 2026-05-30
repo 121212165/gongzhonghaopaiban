@@ -1,26 +1,8 @@
-import { vi, beforeEach } from 'vitest';
-import fs from 'fs';
-import { fileURLToPath } from 'url';
-import { dirname, resolve } from 'path';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+import { vi } from 'vitest';
 
 // ============================================================
-// Global mocks — plain objects/functions (not vi.fn where possible)
-// to survive vi.clearAllMocks() in test files.
+// Global mocks for jsdom environment
 // ============================================================
-
-// Marked
-global.marked = {
-  parse: vi.fn((text) => `<p>${text}</p>`),
-  setOptions: vi.fn()
-};
-
-// DOMPurify
-global.DOMPurify = {
-  sanitize: vi.fn((html) => html)
-};
 
 // URL
 if (typeof global.URL.createObjectURL !== 'function') {
@@ -36,26 +18,6 @@ global.open = vi.fn(() => ({
   print: vi.fn()
 }));
 
-// IndexedDB — plain function so clearAllMocks doesn't break it
-global.indexedDB = {
-  open: () => {
-    const request = {
-      onerror: null,
-      onsuccess: null,
-      onupgradeneeded: null,
-      result: null,
-      error: new Error('IndexedDB not available in test'),
-      readyState: 'done'
-    };
-    setTimeout(() => {
-      if (typeof request.onerror === 'function') {
-        request.onerror({ target: request });
-      }
-    }, 0);
-    return request;
-  }
-};
-
 // Clipboard
 if (!('clipboard' in navigator)) {
   Object.defineProperty(navigator, 'clipboard', {
@@ -65,7 +27,7 @@ if (!('clipboard' in navigator)) {
   });
 }
 
-// Dialogs — plain functions, not vi.fn, so clearAllMocks doesn't break them
+// Dialogs
 global.confirm = () => true;
 global.alert = () => {};
 global.prompt = () => '';
@@ -92,14 +54,12 @@ const mockLocalStorage = {
   get length() { return Object.keys(storageStore).length; }
 };
 
-// Replace both window and globalThis localStorage
 Object.defineProperty(globalThis, 'localStorage', {
   value: mockLocalStorage,
   writable: true,
   configurable: true
 });
 
-// In jsdom, window !== globalThis, so also set on window
 try { Object.defineProperty(window, 'localStorage', {
   value: mockLocalStorage,
   writable: true,
@@ -162,20 +122,4 @@ export function setupDOM() {
     </div>
     <div class="modal-close"></div>
   `;
-}
-
-// ============================================================
-// Load old script.js for regression tests
-// ============================================================
-const scriptPath = resolve(__dirname, '../../script.js');
-let _scriptContent = null;
-
-export async function loadScript() {
-  if (!_scriptContent) {
-    _scriptContent = fs.readFileSync(scriptPath, 'utf-8');
-  }
-  const code = _scriptContent.replace(/\b(const|let)\s+/g, 'var ');
-  (0, eval)(code);
-  // Wait for async initDB() error path to complete
-  await new Promise((resolve) => setTimeout(resolve, 30));
 }

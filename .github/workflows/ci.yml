@@ -6,16 +6,6 @@ on:
     branches: [main, master]
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-      - run: npm ci 2>/dev/null || npm install
-      - run: npx eslint . --ext .js,.ts,.jsx,.tsx 2>/dev/null || echo "No ESLint config"
-
   build:
     runs-on: ubuntu-latest
     steps:
@@ -23,8 +13,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - run: npm ci 2>/dev/null || npm install
-      - run: npm run build 2>/dev/null || echo "No build script"
+      - run: npm ci
+      - run: npm run build
 
   test:
     runs-on: ubuntu-latest
@@ -33,8 +23,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - run: npm ci 2>/dev/null || npm install
-      - run: npm test 2>/dev/null || echo "No test script"
+      - run: npm ci
+      - run: npm test
 
   security:
     runs-on: ubuntu-latest
@@ -43,5 +33,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - run: npm ci 2>/dev/null || npm install
-      - run: npm audit --audit-level=moderate 2>/dev/null || echo "Audit skipped"
+      - run: npm ci
+      - run: npm audit --audit-level=moderate
