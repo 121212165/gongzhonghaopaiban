@@ -5,12 +5,13 @@
 
 const STORAGE_KEY = 'versions';
 const MAX_VERSIONS = 10;
+let idCounter = 0;
 
 /** 保存版本 */
 export function saveVersion(title, content, author) {
   const versions = getVersions();
   const version = {
-    id: Date.now(),
+    id: Date.now() * 1000 + (idCounter++ % 1000),
     title: title || '未命名文章',
     content: content || '',
     author: author || '',

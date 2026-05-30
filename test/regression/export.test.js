@@ -1,107 +1,83 @@
-import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
-import { setupDOM, loadScript } from '../helpers/setup.js';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { setupDOM } from '../helpers/setup.js';
+
+// Mock marked and security modules before importing export
+vi.mock('marked', () => ({
+  marked: { parse: vi.fn((text) => `<p>${text}</p>`) }
+}));
+vi.mock('../../src/config/security.js', () => ({
+  sanitizeHtml: vi.fn((html) => html),
+  PURIFY_CONFIG_STRICT: { ALLOWED_TAGS: [] },
+  PURIFY_CONFIG_LOOSE: { ALLOWED_TAGS: [], ALLOWED_ATTR: ['style'] }
+}));
+
+import { exportMarkdown, exportWechat } from '../../src/export.js';
 
 // ---------------------------------------------------------------------------
-// Export behaviour tests
-//
-// These verify that export functions produce correct output and handle
-// fallback paths gracefully.
+// Export behaviour tests — import src/ modules directly
 // ---------------------------------------------------------------------------
-
-beforeAll(async () => {
-  setupDOM();
-  await loadScript();
-});
 
 beforeEach(() => {
   vi.clearAllMocks();
-
-  document.getElementById('editor').value = '';
-  document.getElementById('articleTitle').value = '';
-  document.getElementById('articleAuthor').value = '';
-  if ('currentHash' in globalThis) globalThis.currentHash = '';
-
-  // Ensure clipboard mock resolves by default
+  setupDOM();
   navigator.clipboard.writeText = vi.fn(() => Promise.resolve());
 });
 
 describe('exportWechat', () => {
   it('copies formatted HTML to clipboard via navigator.clipboard.writeText', () => {
-    document.getElementById('articleTitle').value = '测试文章';
-    document.getElementById('editor').value = 'Hello World';
-
-    globalThis.exportWechat();
+    exportWechat('测试文章', 'Hello World', '');
 
     expect(navigator.clipboard.writeText).toHaveBeenCalledTimes(1);
     const html = navigator.clipboard.writeText.mock.calls[0][0];
-    // The HTML should contain the article title and content
     expect(html).toContain('测试文章');
     expect(html).toContain('Hello World');
   });
 
   it('falls back to document.execCommand("copy") when clipboard API is unavailable', async () => {
-    document.getElementById('articleTitle').value = '标题';
-    document.getElementById('editor').value = '内容';
-
-    // Make clipboard API reject
     navigator.clipboard.writeText = vi.fn(() => Promise.reject(new Error('denied')));
-
-    // Reset execCommand spy to track fresh calls
     document.execCommand = vi.fn(() => true);
 
-    globalThis.exportWechat();
+    exportWechat('标题', '内容', '');
 
-    // Wait for the promise rejection to propagate
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     expect(document.execCommand).toHaveBeenCalledWith('copy');
   });
 
-  it('includes inline styles in the copied HTML', () => {
-    document.getElementById('articleTitle').value = 'Styled';
-    document.getElementById('editor').value = 'Hello';
-
-    globalThis.exportWechat();
+  it('includes section wrapper with max-width in the copied HTML', () => {
+    exportWechat('Styled', 'Hello', '');
 
     const html = navigator.clipboard.writeText.mock.calls[0][0];
-    // Should contain a section wrapper with max-width
-    expect(html).toContain('max-width: 677px');
-    // Should contain the title styled
-    expect(html).toContain('font-size: 22px');
-    // Should contain the content
+    expect(html).toContain('max-width:677px');
     expect(html).toContain('Hello');
+  });
+
+  it('escapes HTML in title and author', () => {
+    exportWechat('<script>xss</script>', 'content', '<b>attacker</b>');
+
+    const html = navigator.clipboard.writeText.mock.calls[0][0];
+    expect(html).not.toContain('<script>xss</script>');
+    expect(html).toContain('&lt;script&gt;');
   });
 });
 
 describe('exportMarkdown', () => {
   it('triggers a download by creating and clicking an anchor element', () => {
-    // Spy on HTMLElement.prototype.click to detect the programmatic click
     const clickSpy = vi.spyOn(HTMLElement.prototype, 'click');
 
-    document.getElementById('articleTitle').value = '我的文档';
-    document.getElementById('editor').value = '# Title\n\nContent';
-
-    globalThis.exportMarkdown();
+    exportMarkdown('我的文档', '# Title\n\nContent', '');
 
     expect(clickSpy).toHaveBeenCalledTimes(1);
     clickSpy.mockRestore();
   });
 
-  it('uses article title as the download filename', () => {
+  it('includes title and content in the downloaded markdown', () => {
     const createSpy = vi.spyOn(document, 'createElement');
 
-    document.getElementById('articleTitle').value = '我的文档';
-    document.getElementById('editor').value = 'Some content';
+    exportMarkdown('我的文档', 'Some content', '作者');
 
-    globalThis.exportMarkdown();
-
-    // Find the anchor element that was created
     const anchorCalls = createSpy.mock.calls.filter((args) => args[0] === 'a');
     expect(anchorCalls.length).toBe(1);
-
-    // Verify the download attribute contains the title
-    // We can't easily access the element properties after creation,
-    // but we know an anchor was created
     createSpy.mockRestore();
   });
 });

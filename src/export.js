@@ -3,6 +3,9 @@
  * 职责：Markdown 导出、PDF 导出、公众号格式导出
  */
 
+import { marked } from 'marked';
+import { sanitizeHtml, PURIFY_CONFIG_STRICT, PURIFY_CONFIG_LOOSE } from './config/security.js';
+
 /** HTML 转义 */
 function escapeHtml(str) {
   if (!str) return '';
@@ -28,7 +31,7 @@ export function exportMarkdown(title, content, author) {
 
 /** 导出 PDF（通过浏览器打印） */
 export function exportPdf(title, content, author) {
-  const html = DOMPurify.sanitize(marked.parse(content));
+  const html = sanitizeHtml(marked.parse(content), PURIFY_CONFIG_STRICT);
   const escapedTitle = escapeHtml(title);
   const escapedAuthor = escapeHtml(author);
 
@@ -113,13 +116,9 @@ function addWechatInlineStyles(html) {
 
 /** 导出公众号格式（复制到剪贴板） */
 export function exportWechat(title, content, author) {
-  const html = DOMPurify.sanitize(marked.parse(content));
+  const html = sanitizeHtml(marked.parse(content), PURIFY_CONFIG_STRICT);
   const styledHtml = addWechatInlineStyles(html);
-  // 二次消毒
-  const safeStyled = DOMPurify.sanitize(styledHtml, {
-    ALLOWED_TAGS: ['h1','h2','h3','h4','h5','h6','p','br','hr','ul','ol','li','blockquote','pre','code','table','thead','tbody','tr','th','td','a','img','em','strong','i','b','u','s','del','ins','sub','sup','span','div','section','figure','figcaption','dl','dt','dd','details','summary'],
-    ALLOWED_ATTR: ['style','href','target','rel','src','alt','title','width','height','id','class','colspan','rowspan','align','valign','start','reversed','type']
-  });
+  const safeStyled = sanitizeHtml(styledHtml, PURIFY_CONFIG_LOOSE);
 
   const wechatHtml = `<section style="max-width:677px;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;">
   <h1 style="font-size:22px;font-weight:bold;color:#1a1a1a;margin-bottom:20px;text-align:left;">${escapeHtml(title)}</h1>
