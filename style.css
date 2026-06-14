@@ -1,0 +1,66 @@
+:root {
+  --primary: #007aff;
+  --bg: #f5f5f5;
+  --surface: #fff;
+  --text: #333;
+  --text2: #666;
+  --border: #e0e0e0;
+  --code-bg: #f5f5f5;
+  --code-color: #e83e8c;
+  --code-block-bg: #282c34;
+  --code-block-color: #abb2bf;
+  --quote-bg: #f8f9fa;
+  --quote-border: #007aff;
+  --heading: #000;
+}
+
+.theme-elegant { --primary: #8e44ad; --bg: #fafafa; --text: #2c3e50; --text2: #7f8c8d; --heading: #1a1a1a; --quote-bg: #f0f0f0; --quote-border: #8e44ad; }
+.theme-modern { --primary: #00d4ff; --bg: #fff; --text: #1a1a1a; --heading: #00d4ff; --quote-bg: #f0f7ff; --quote-border: #00d4ff; }
+.theme-dark { --primary: #4a9eff; --bg: #1a1a1a; --surface: #2d2d2d; --text: #e0e0e0; --text2: #a0a0a0; --heading: #fff; --border: #3d3d3d; --quote-bg: #2d2d2d; --quote-border: #4a9eff; --code-bg: #2d2d2d; --code-block-bg: #1e1e1e; --code-block-color: #d4d4d4; }
+.theme-minimal { --primary: #333; --bg: #fff; --text: #333; --heading: #000; --quote-border: #333; }
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
+
+.header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.header h1 { font-size: 18px; color: var(--text); white-space: nowrap; }
+.theme-bar { display: flex; gap: 6px; flex: 1; }
+.theme-btn { padding: 6px 14px; border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 6px; cursor: pointer; font-size: 13px; transition: all 0.2s; }
+.theme-btn:hover { border-color: var(--primary); }
+.theme-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+.copy-btn { padding: 8px 20px; background: var(--primary); color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; white-space: nowrap; transition: opacity 0.2s; }
+.copy-btn:hover { opacity: 0.85; }
+
+.main { flex: 1; display: flex; overflow: hidden; }
+.editor-pane, .preview-pane { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.editor-pane { border-right: 1px solid var(--border); }
+textarea#editor { flex: 1; padding: 20px; border: none; resize: none; outline: none; font-family: 'Monaco', 'Menlo', 'Consolas', monospace; font-size: 14px; line-height: 1.6; background: var(--surface); color: var(--text); }
+.stats { padding: 8px 20px; font-size: 12px; color: var(--text2); background: var(--bg); border-top: 1px solid var(--border); }
+#preview { flex: 1; padding: 20px; overflow-y: auto; background: var(--surface); }
+
+#preview h1 { font-size: 28px; color: var(--heading); margin: 1em 0 0.5em; font-weight: bold; }
+#preview h2 { font-size: 24px; color: var(--heading); margin: 1em 0 0.5em; font-weight: bold; }
+#preview h3 { font-size: 20px; color: var(--heading); margin: 1em 0 0.5em; font-weight: bold; }
+#preview h4 { font-size: 18px; color: var(--heading); margin: 1em 0 0.5em; font-weight: bold; }
+#preview p { font-size: 16px; line-height: 1.8; margin-bottom: 1em; }
+#preview strong { font-weight: bold; }
+#preview em { font-style: italic; }
+#preview a { color: var(--primary); text-decoration: none; }
+#preview ul, #preview ol { margin-bottom: 1em; padding-left: 2em; }
+#preview li { margin-bottom: 0.5em; line-height: 1.8; }
+#preview blockquote { border-left: 4px solid var(--quote-border); padding: 15px 20px; margin: 20px 0; background: var(--quote-bg); color: var(--text2); border-radius: 0 8px 8px 0; }
+#preview code { background: var(--code-bg); color: var(--code-color); padding: 2px 6px; border-radius: 4px; font-family: 'Monaco', 'Menlo', 'Consolas', monospace; font-size: 0.9em; }
+#preview pre { background: var(--code-block-bg); color: var(--code-block-color); padding: 20px; border-radius: 8px; overflow-x: auto; margin: 20px 0; }
+#preview pre code { background: transparent; color: inherit; padding: 0; }
+#preview img { max-width: 100%; height: auto; display: block; margin: 20px auto; border-radius: 8px; }
+#preview hr { border: none; border-top: 2px solid var(--border); margin: 30px 0; }
+#preview table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+#preview th, #preview td { border: 1px solid var(--border); padding: 12px; text-align: left; }
+#preview th { background: var(--bg); font-weight: bold; }
+#preview del { text-decoration: line-through; color: var(--text2); }
+
+@media (max-width: 768px) {
+  .main { flex-direction: column; }
+  .editor-pane { border-right: none; border-bottom: 1px solid var(--border); }
+  .header { flex-wrap: wrap; }
+}
