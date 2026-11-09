@@ -8,7 +8,7 @@
     "build": "vite build"
   },
   "dependencies": {
-    "marked": "^15.0.6",
+    "marked": "^18.1.3",
     "dompurify": "^3.2.4"
   },
   "devDependencies": {
