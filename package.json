@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "marked": "^15.0.6",
-    "dompurify": "^3.2.4"
+    "dompurify": "^3.4.17"
   },
   "devDependencies": {
     "vite": "^6.3.0"
